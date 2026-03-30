@@ -26,7 +26,7 @@ import { parseSessionFiles } from './parser.js';
 import { runAllDetectors, runAsyncDetectors } from './detectors/registry.js';
 import { renderHtmlReport } from './report-html.js';
 
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
 
 // ─── CLI ──────────────────────────────────────────────────────────────────────
 
