@@ -877,7 +877,7 @@ body::before {
   background: var(--bg-surface);
   border: 1px solid var(--grid-line-strong);
   border-radius: var(--radius);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .panel-header {
@@ -1635,8 +1635,6 @@ function toggleTheme() {
   }, { threshold: 0.2 });
 
   document.querySelectorAll('.savings-bars').forEach(function(el) { observer.observe(el); });
-})();
-
 })();
 </script>`;
 }
