@@ -1,0 +1,41 @@
+{
+  "name": "tokenomics",
+  "version": "1.0.0",
+  "description": "Token intelligence for Claude Code — analyze sessions, find waste, get actionable fixes",
+  "type": "module",
+  "main": "dist/analyze.js",
+  "bin": {
+    "tokenomics": "./dist/analyze.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "claude-code",
+    "token-optimization",
+    "cli",
+    "developer-tools",
+    "ai-tools"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.9"
+  },
+  "files": [
+    "dist/"
+  ]
+}
