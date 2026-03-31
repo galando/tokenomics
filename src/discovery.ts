@@ -134,25 +134,40 @@ export async function discoverFiles(options: DiscoveryOptions): Promise<Discover
           }
         }
 
-        const jsonlFiles = await findJsonlFiles(projectPath, projectDir.name, cutoffDate, dirLabel);
-        for (const f of jsonlFiles) {
+        // Main session files (directly in project dir)
+        const mainFiles = await findJsonlFiles(projectPath, projectDir.name, cutoffDate, dirLabel);
+        for (const f of mainFiles) {
           if (!seenSessionIds.has(f.sessionId)) {
             seenSessionIds.add(f.sessionId);
             files.push(f);
           }
         }
 
-        const subagentsDir = join(projectPath, 'subagents');
+        // Scan nested session dirs for subagent files concurrently
+        // Structure: <project>/<session-uuid>/subagents/<agent-id>.jsonl
         try {
-          const subagentFiles = await findJsonlFiles(subagentsDir, projectDir.name, cutoffDate, dirLabel);
-          for (const f of subagentFiles) {
-            if (!seenSessionIds.has(f.sessionId)) {
-              seenSessionIds.add(f.sessionId);
-              files.push(f);
+          const entries = await readdir(projectPath, { withFileTypes: true });
+          const subdirNames = entries.filter(e => e.isDirectory()).map(e => e.name);
+
+          if (subdirNames.length > 0) {
+            const subagentResults = await Promise.allSettled(
+              subdirNames.map(dirName =>
+                findJsonlFiles(join(projectPath, dirName, 'subagents'), projectDir.name, cutoffDate, dirLabel)
+              )
+            );
+            for (const result of subagentResults) {
+              if (result.status === 'fulfilled') {
+                for (const f of result.value) {
+                  if (!seenSessionIds.has(f.sessionId)) {
+                    seenSessionIds.add(f.sessionId);
+                    files.push(f);
+                  }
+                }
+              }
             }
           }
         } catch {
-          // subagents directory may not exist
+          // project dir read error
         }
       }
     } catch (error) {

@@ -171,7 +171,8 @@ export function detectModelSelection(sessions: SessionData[]): DetectorResult | 
 
   // Calculate total tokens for savings percentage
   const totalTokens = sessions.reduce(
-    (sum, s) => sum + s.totalInputTokens + s.totalOutputTokens,
+    (sum, s) =>
+      sum + s.totalInputTokens + s.totalOutputTokens + s.totalCacheReadTokens + s.totalCacheCreationTokens,
     0
   );
 

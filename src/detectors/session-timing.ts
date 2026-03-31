@@ -87,7 +87,8 @@ export function detectSessionTiming(sessions: SessionData[]): DetectorResult | n
 
   // Calculate savings potential (mainly from avoiding rate limits)
   const totalTokens = sessions.reduce(
-    (sum, s) => sum + s.totalInputTokens + s.totalOutputTokens,
+    (sum, s) =>
+      sum + s.totalInputTokens + s.totalOutputTokens + s.totalCacheReadTokens + s.totalCacheCreationTokens,
     0
   );
   const savingsPercent = highIntensityWindows > 3 ? 5 : lateNightSessions > sessions.length * 0.3 ? 3 : 0;

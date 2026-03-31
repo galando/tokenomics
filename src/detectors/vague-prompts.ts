@@ -188,7 +188,8 @@ export function detectVaguePrompts(sessions: SessionData[]): DetectorResult | nu
   }
 
   const totalTokens = sessions.reduce(
-    (sum, s) => sum + s.totalInputTokens + s.totalOutputTokens,
+    (sum, s) =>
+      sum + s.totalInputTokens + s.totalOutputTokens + s.totalCacheReadTokens + s.totalCacheCreationTokens,
     0
   );
   const savingsPercent = totalTokens > 0 ? Math.min(10, Math.round((wastedTokens / totalTokens) * 100)) : 0;
