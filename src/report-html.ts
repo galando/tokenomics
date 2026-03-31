@@ -182,7 +182,7 @@ function renderSavingsBar(findings: DetectorResult[]): string {
   const totalSavingsTokens = findings.reduce((sum, f) => sum + f.savingsTokens, 0);
 
   const bars = findings.map((f, i) => {
-    const widthPct = totalSavingsTokens > 0 ? (f.savingsTokens / totalSavingsTokens) * 100 : 0;
+    const widthPct = totalSavingsTokens > 0 ? Math.max(2, (f.savingsTokens / totalSavingsTokens) * 100) : 0;
     const sev = severityConfig(f.severity);
     const description = DETECTOR_DESCRIPTIONS[f.detector] ?? f.remediation.problem.slice(0, 120);
     return `<div class="bar-row" style="animation-delay:${i * 80}ms">
