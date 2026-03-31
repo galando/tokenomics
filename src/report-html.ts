@@ -213,8 +213,9 @@ function renderHeader(metadata: AnalysisOutput['metadata']): string {
   <div class="cmd-header-top">
     <div class="cmd-brand">
       <div class="cmd-logo">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round">
+          <path d="M12 2.5L2.5 7.75v8.5L12 21.5l9.5-5.25v-8.5L12 2.5z"/>
+          <path d="M12 12V21.5M12 12l9.5-4.25M12 12L2.5 7.75"/>
         </svg>
       </div>
       <div class="cmd-titles">
