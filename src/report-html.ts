@@ -53,21 +53,21 @@ function markdownToHtml(md: string): string {
     .replace(/\n/g, '<br/>');
 }
 
-function severityConfig(s: Severity): { label: string; color: string; glow: string } {
+function severityConfig(s: Severity): { label: string; color: string; glow: string; explanation: string } {
   switch (s) {
     case 'high':
-      return { label: 'CRITICAL', color: '#ff4d6a', glow: 'rgba(255,77,106,0.4)' };
+      return { label: 'HIGH COST', color: '#ff4d6a', glow: 'rgba(255,77,106,0.4)', explanation: 'Significant token waste — fix this first for biggest savings' };
     case 'medium':
-      return { label: 'WARNING', color: '#ffbe2e', glow: 'rgba(255,190,46,0.3)' };
+      return { label: 'MODERATE', color: '#ffbe2e', glow: 'rgba(255,190,46,0.3)', explanation: 'Noticeable waste — worth addressing for better efficiency' };
     case 'low':
-      return { label: 'INFO', color: '#22d3ee', glow: 'rgba(34,211,238,0.25)' };
+      return { label: 'LOW', color: '#22d3ee', glow: 'rgba(34,211,238,0.25)', explanation: 'Minor waste — fix when convenient for incremental savings' };
   }
 }
 
 function calculateHealthScore(findings: DetectorResult[]): { score: number; grade: string; color: string } {
-  const severityMultiplier: Record<Severity, number> = { high: 1.5, medium: 1.0, low: 0.5 };
+  const penaltyPerSeverity: Record<Severity, number> = { high: 18, medium: 10, low: 4 };
   const penalty = findings.reduce(
-    (sum, f) => sum + f.savingsPercent * severityMultiplier[f.severity] * f.confidence,
+    (sum, f) => sum + penaltyPerSeverity[f.severity],
     0
   );
   const score = Math.max(0, Math.min(100, Math.round(100 - penalty)));
@@ -179,10 +179,10 @@ function renderDonutChart(input: number, output: number, cacheRead: number, cach
 
 function renderSavingsBar(findings: DetectorResult[]): string {
   if (findings.length === 0) return '';
-  const maxSavings = Math.max(...findings.map(f => f.savingsTokens));
+  const totalSavingsTokens = findings.reduce((sum, f) => sum + f.savingsTokens, 0);
 
   const bars = findings.map((f, i) => {
-    const widthPct = maxSavings > 0 ? (f.savingsTokens / maxSavings) * 100 : 0;
+    const widthPct = totalSavingsTokens > 0 ? Math.max(2, (f.savingsTokens / totalSavingsTokens) * 100) : 0;
     const sev = severityConfig(f.severity);
     const description = DETECTOR_DESCRIPTIONS[f.detector] ?? f.remediation.problem.slice(0, 120);
     return `<div class="bar-row" style="animation-delay:${i * 80}ms">
@@ -213,8 +213,9 @@ function renderHeader(metadata: AnalysisOutput['metadata']): string {
   <div class="cmd-header-top">
     <div class="cmd-brand">
       <div class="cmd-logo">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round">
+          <path d="M12 2.5L2.5 7.75v8.5L12 21.5l9.5-5.25v-8.5L12 2.5z"/>
+          <path d="M12 12V21.5M12 12l9.5-4.25M12 12L2.5 7.75"/>
         </svg>
       </div>
       <div class="cmd-titles">
@@ -377,7 +378,7 @@ function renderUnifiedFindings(findings: DetectorResult[]): string {
   <summary class="finding-summary" style="animation-delay:${i * 60}ms">
     <div class="finding-col finding-col--sev">
       <span class="sev-indicator" style="background:${sev.color};box-shadow:0 0 8px ${sev.glow}"></span>
-      <span class="sev-text" style="color:${sev.color}">${sev.label}</span>
+      <span class="sev-text" style="color:${sev.color}" data-tooltip="${escapeHtml(sev.explanation)}">${sev.label} <span class="bar-info">&#9432;</span></span>
     </div>
     <div class="finding-col finding-col--name">${escapeHtml(f.title)}</div>
     <div class="finding-col finding-col--savings">
@@ -408,10 +409,6 @@ function renderUnifiedFindings(findings: DetectorResult[]): string {
       <div class="section-tag"><span class="section-hash">#</span>REMEDIATION</div>
       <div class="section-content">${renderRemediationSteps(f.remediation.steps)}</div>
     </div>
-    ${f.remediation.examples.length > 0 ? `<div class="finding-section">
-      <div class="section-tag"><span class="section-hash">#</span>EXAMPLES</div>
-      <div class="section-content">${renderBeforeAfter(f.remediation.examples)}</div>
-    </div>` : ''}
     <div class="quickwin-strip" style="border-color:${sev.color}40">
       <div class="quickwin-tag" style="background:${sev.color}18;color:${sev.color}">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
@@ -435,7 +432,7 @@ function renderUnifiedFindings(findings: DetectorResult[]): string {
         <span class="findings-th findings-th--sev">SEVERITY</span>
         <span class="findings-th findings-th--name">DETECTOR</span>
         <span class="findings-th findings-th--savings">SAVINGS</span>
-        <span class="findings-th findings-th--conf">CONFIDENCE</span>
+        <span class="findings-th findings-th--conf" data-tooltip="How certain the detector is that this pattern is real, based on how many sessions show it and how consistently">CONFIDENCE</span>
         <span class="findings-th findings-th--summary">PROBLEM</span>
         <span class="findings-th findings-th--chevron"></span>
       </div>
@@ -496,15 +493,15 @@ function renderFixSuggestions(findings: DetectorResult[]): string {
     </div>
     <div class="panel-body">
       <div class="actions-grid">
-        ${autoFixable.length > 0 ? `<div class="action-card action-auto">
+        <div class="action-card action-auto">
           <div class="action-card-header">
             <span class="action-status-dot" style="background:#34d399;box-shadow:0 0 8px rgba(52,211,153,0.5)"></span>
             <h4>AUTO-FIXABLE</h4>
           </div>
-          <p class="action-intro">These fixes run locally (no LLM needed) and edit your Claude configuration files directly.</p>
-          <ul class="action-list">
-            ${autoFixItems}
-          </ul>
+          ${autoFixable.length > 0
+            ? `<p class="action-intro">These fixes run locally (no LLM needed) and edit your Claude configuration files directly.</p>
+               <ul class="action-list">${autoFixItems}</ul>`
+            : `<p class="action-intro">No auto-fixable issues detected in this scan. Run <code>tokenomics --fix</code> to check again after changing your workflow.</p>`}
           <div class="action-cli-block">
             <div class="action-cli-label">Run in your terminal:</div>
             <div class="action-cli action-cli--prominent">
@@ -522,7 +519,7 @@ function renderFixSuggestions(findings: DetectorResult[]): string {
               </ol>
             </div>
           </div>
-        </div>` : ''}
+        </div>
         <div class="action-card action-manual">
           <div class="action-card-header">
             <span class="action-status-dot" style="background:#ffbe2e;box-shadow:0 0 8px rgba(255,190,46,0.5)"></span>
@@ -684,6 +681,13 @@ body::before {
 .bento-donut    { grid-column: span 3; }
 .bento-savings  { grid-column: span 3; }
 
+/* Keep donut and savings panels equal height */
+.bento-grid .bento-donut,
+.bento-grid .bento-savings {
+  display: flex;
+  flex-direction: column;
+}
+
 .bento-card {
   background: var(--bg-surface);
   border: 1px solid var(--grid-line-strong);
@@ -702,6 +706,20 @@ body::before {
   align-items: stretch;
   text-align: left;
   padding: 0;
+}
+
+/* Stretch panel-body inside donut/savings so cards match height */
+.bento-donut .panel-body,
+.bento-savings .panel-body {
+  flex: 1;
+  padding: 20px;
+}
+
+.bento-donut .panel-body {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 200px;
 }
 
 @keyframes bento-fade-in {
@@ -918,7 +936,7 @@ body::before {
 .panel-body--flush { padding: 0; }
 
 /* ── Donut ── */
-.donut-container { display: flex; gap: 20px; align-items: center; }
+.donut-container { display: flex; gap: 24px; align-items: center; justify-content: center; width: 100%; min-height: 140px; }
 .donut-chart { width: 130px; height: 130px; flex-shrink: 0; }
 .donut-segment { transition: stroke-width 0.2s; }
 .donut-total { font-size: 1rem; font-weight: 700; fill: var(--text-primary); font-family: var(--font-sans); }

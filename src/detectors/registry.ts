@@ -38,7 +38,7 @@ export function runAllDetectors(sessions: SessionData[]): DetectorResult[] {
     }
   }
 
-  findings.sort((a, b) => b.savingsPercent - a.savingsPercent);
+  findings.sort((a, b) => b.savingsTokens - a.savingsTokens);
 
   return findings;
 }
@@ -57,7 +57,7 @@ export async function runAsyncDetectors(sessions: SessionData[]): Promise<Detect
     }
   }
 
-  findings.sort((a, b) => b.savingsPercent - a.savingsPercent);
+  findings.sort((a, b) => b.savingsTokens - a.savingsTokens);
   return findings;
 }
 

@@ -572,8 +572,8 @@ async function main(): Promise<void> {
   const asyncFindings = await runAsyncDetectors(sessions);
   findings = [...findings, ...asyncFindings];
 
-  // Sort by savings percent
-  findings.sort((a, b) => b.savingsPercent - a.savingsPercent);
+  // Sort by absolute token savings (descending)
+  findings.sort((a, b) => b.savingsTokens - a.savingsTokens);
 
   if (options.verbose) {
     console.error(`Found ${findings.length} patterns`);
@@ -635,6 +635,20 @@ async function main(): Promise<void> {
   }
 
   // ── Analysis mode ──
+  // Drop findings with zero savings — no actionable recommendation for reports
+  findings = findings.filter(f => f.savingsTokens > 0);
+
+  // Re-derive severity from relative savings share so labels are consistent
+  const topSavings = findings[0]?.savingsTokens ?? 0;
+  if (topSavings > 0) {
+    for (const f of findings) {
+      const share = f.savingsTokens / topSavings;
+      if (share >= 0.5) f.severity = 'high';
+      else if (share >= 0.1) f.severity = 'medium';
+      else f.severity = 'low';
+    }
+  }
+
   const output: AnalysisOutput = { metadata, findings };
 
   if (options.html) {

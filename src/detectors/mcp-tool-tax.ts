@@ -113,7 +113,8 @@ export async function detectMcpToolTax(sessions: SessionData[]): Promise<Detecto
     neverUsedServers.length * sessions.length * 200;
 
   const totalTokens = sessions.reduce(
-    (sum, s) => sum + s.totalInputTokens + s.totalOutputTokens,
+    (sum, s) =>
+      sum + s.totalInputTokens + s.totalOutputTokens + s.totalCacheReadTokens + s.totalCacheCreationTokens,
     0
   );
   const savingsPercent =

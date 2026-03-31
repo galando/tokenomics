@@ -156,8 +156,12 @@ export function detectFileReadWaste(sessions: SessionData[]): DetectorResult | n
     .slice(0, 5);
 
   const wasteRate = (sessionsWithWaste / sessions.length) * 100;
-  const totalTokens = sessions.reduce((sum, s) => sum + s.totalInputTokens + s.totalOutputTokens, 0);
-  const savingsPercent = totalTokens > 0 ? Math.round((totalWastedTokens / totalTokens) * 100) : 0;
+  const totalTokens = sessions.reduce(
+    (sum, s) =>
+      sum + s.totalInputTokens + s.totalOutputTokens + s.totalCacheReadTokens + s.totalCacheCreationTokens,
+    0
+  );
+  const savingsPercent = totalTokens > 0 ? Math.min(50, Math.round((totalWastedTokens / totalTokens) * 100)) : 0;
 
   const severity: 'high' | 'medium' | 'low' =
     savingsPercent > 10 ? 'high' : savingsPercent > 5 ? 'medium' : 'low';

@@ -141,7 +141,8 @@ export async function detectClaudeMdOverhead(
   findings.sort((a, b) => b.estimatedOverhead - a.estimatedOverhead);
 
   const totalTokens = sessions.reduce(
-    (sum, s) => sum + s.totalInputTokens + s.totalOutputTokens,
+    (sum, s) =>
+      sum + s.totalInputTokens + s.totalOutputTokens + s.totalCacheReadTokens + s.totalCacheCreationTokens,
     0
   );
   const savingsPercent = totalTokens > 0 ? Math.min(20, Math.round((totalOverhead / totalTokens) * 100)) : 0;
