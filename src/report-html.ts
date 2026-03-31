@@ -65,9 +65,9 @@ function severityConfig(s: Severity): { label: string; color: string; glow: stri
 }
 
 function calculateHealthScore(findings: DetectorResult[]): { score: number; grade: string; color: string } {
-  const severityMultiplier: Record<Severity, number> = { high: 1.5, medium: 1.0, low: 0.5 };
+  const penaltyPerSeverity: Record<Severity, number> = { high: 18, medium: 10, low: 4 };
   const penalty = findings.reduce(
-    (sum, f) => sum + f.savingsPercent * severityMultiplier[f.severity] * f.confidence,
+    (sum, f) => sum + penaltyPerSeverity[f.severity],
     0
   );
   const score = Math.max(0, Math.min(100, Math.round(100 - penalty)));
