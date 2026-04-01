@@ -48,7 +48,7 @@ describe('hooks', () => {
         JSON.stringify({
           hooks: {
             SessionStart: [
-              { type: 'command', command: 'tokenomics --inject --quiet' },
+              { matcher: '', hooks: [{ type: 'command', command: 'tokenomics --inject --quiet' }] },
             ],
           },
         }, null, 2),
@@ -67,7 +67,9 @@ describe('hooks', () => {
       const hooks = (settings!.content.hooks as Record<string, unknown>);
       const sessionStart = hooks.SessionStart as Array<Record<string, unknown>>;
       expect(sessionStart).toHaveLength(1);
-      expect(sessionStart[0]!.command).toBe('tokenomics --inject --quiet');
+      const entry = sessionStart[0] as Record<string, unknown>;
+      const entryHooks = entry.hooks as Array<Record<string, unknown>>;
+      expect(entryHooks[0]!.command).toBe('tokenomics --inject --quiet');
     });
 
     it('preserves existing hooks', async () => {
@@ -77,7 +79,7 @@ describe('hooks', () => {
         JSON.stringify({
           hooks: {
             SessionStart: [
-              { type: 'command', command: 'other-hook --run' },
+              { matcher: '', hooks: [{ type: 'command', command: 'other-hook --run' }] },
             ],
           },
         }, null, 2),
@@ -89,7 +91,8 @@ describe('hooks', () => {
       const hooks = (settings!.content.hooks as Record<string, unknown>);
       const sessionStart = hooks.SessionStart as Array<Record<string, unknown>>;
       expect(sessionStart).toHaveLength(2);
-      expect(sessionStart[0]!.command).toBe('other-hook --run');
+      const firstHooks = (sessionStart[0] as Record<string, unknown>).hooks as Array<Record<string, unknown>>;
+      expect(firstHooks[0]!.command).toBe('other-hook --run');
     });
 
     it('is idempotent — install twice yields one entry', async () => {
@@ -111,8 +114,8 @@ describe('hooks', () => {
         JSON.stringify({
           hooks: {
             SessionStart: [
-              { type: 'command', command: 'other-hook --run' },
-              { type: 'command', command: 'tokenomics --inject --quiet' },
+              { matcher: '', hooks: [{ type: 'command', command: 'other-hook --run' }] },
+              { matcher: '', hooks: [{ type: 'command', command: 'tokenomics --inject --quiet' }] },
             ],
           },
         }, null, 2),
@@ -125,7 +128,8 @@ describe('hooks', () => {
       const hooks = (settings!.content.hooks as Record<string, unknown>);
       const sessionStart = hooks.SessionStart as Array<Record<string, unknown>>;
       expect(sessionStart).toHaveLength(1);
-      expect(sessionStart[0]!.command).toBe('other-hook --run');
+      const remainingHooks = (sessionStart[0] as Record<string, unknown>).hooks as Array<Record<string, unknown>>;
+      expect(remainingHooks[0]!.command).toBe('other-hook --run');
     });
 
     it('preserves other hooks', async () => {
@@ -135,7 +139,7 @@ describe('hooks', () => {
         JSON.stringify({
           hooks: {
             SessionStart: [
-              { type: 'command', command: 'keep-me --running' },
+              { matcher: '', hooks: [{ type: 'command', command: 'keep-me --running' }] },
             ],
           },
         }, null, 2),

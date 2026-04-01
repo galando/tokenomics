@@ -33,7 +33,12 @@ export async function isHookInstalled(): Promise<boolean> {
   if (!Array.isArray(sessionStartHooks)) return false;
 
   return sessionStartHooks.some(
-    (hook) => hook.command === HOOK_COMMAND || (typeof hook.command === 'string' && hook.command.includes('tokenomics --inject'))
+    (entry) => {
+      const entryHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
+      return Array.isArray(entryHooks) && entryHooks.some(
+        (hook) => hook.command === HOOK_COMMAND || (typeof hook.command === 'string' && hook.command.includes('tokenomics --inject'))
+      );
+    }
   );
 }
 
@@ -57,19 +62,24 @@ export async function installHooks(): Promise<{ installed: boolean; path: string
 
   // Check if already installed
   const alreadyInstalled = sessionStartHooks.some(
-    (hook) => hook.command === HOOK_COMMAND
+    (entry) => {
+      const entryHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
+      return Array.isArray(entryHooks) && entryHooks.some(
+        (hook) => hook.command === HOOK_COMMAND
+      );
+    }
   );
 
   if (alreadyInstalled) {
     return { installed: false, path: targetPath };
   }
 
-  // Add the hook
+  // Add the hook — Claude Code expects { matcher, hooks: [...] } entries
   const updatedHooks = {
     ...hooks,
     SessionStart: [
       ...sessionStartHooks,
-      { type: 'command', command: HOOK_COMMAND },
+      { matcher: '', hooks: [{ type: 'command', command: HOOK_COMMAND }] },
     ],
   };
 
@@ -105,7 +115,11 @@ export async function uninstallHooks(): Promise<{ removed: boolean; path: string
   }
 
   const filtered = sessionStartHooks.filter(
-    (hook) => hook.command !== HOOK_COMMAND
+    (entry) => {
+      const entryHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
+      if (!Array.isArray(entryHooks)) return true; // keep non-matching entries
+      return !entryHooks.some((hook) => hook.command === HOOK_COMMAND);
+    }
   );
 
   if (filtered.length === sessionStartHooks.length) {
