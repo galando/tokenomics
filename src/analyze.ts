@@ -26,7 +26,7 @@ import { parseSessionFiles } from './parser.js';
 import { runAllDetectors, runAsyncDetectors } from './detectors/registry.js';
 import { renderHtmlReport } from './report-html.js';
 
-const VERSION = '1.0.1';
+const VERSION = '1.1.0';
 
 // ─── CLI ──────────────────────────────────────────────────────────────────────
 
@@ -104,7 +104,7 @@ OTHER
   --version            Show version
 
 WHAT --fix DOES
-  1. Sets default model to Sonnet (saves ~5x cost on simple sessions)
+  1. Sets default model to Sonnet (saves ~5x tokens on simple sessions)
      Edits: ~/.claude/settings.json (or equivalent)
   2. Removes never-used MCP servers (reduces overhead on every session)
      Edits: ~/.claude.json (or equivalent)
@@ -194,7 +194,7 @@ async function fixModelSelection(_finding: DetectorResult, dryRun: boolean): Pro
 
       const currentModel = (settings.model as string | undefined) ?? '(not set)';
       if (currentModel.includes('sonnet') || currentModel.includes('haiku')) {
-        return null; // Already on a cheaper model
+        return null; // Already on a lighter model
       }
 
       const updated = { ...settings, model: 'claude-sonnet-4-6' };
@@ -502,7 +502,7 @@ function renderMarkdownReport(output: AnalysisOutput): string {
     lines.push('**What\'s happening:**');
     lines.push(f.remediation.problem);
     lines.push('');
-    lines.push('**Why this costs you:**');
+    lines.push('**Why this matters:**');
     lines.push(f.remediation.whyItMatters);
     lines.push('');
     lines.push('**How to fix it:**');
@@ -638,14 +638,24 @@ async function main(): Promise<void> {
   // Drop findings with zero savings — no actionable recommendation for reports
   findings = findings.filter(f => f.savingsTokens > 0);
 
-  // Re-derive severity from relative savings share so labels are consistent
+  // Re-derive severity using hybrid approach:
+  //   - Absolute floor/ceiling based on % of total tokens
+  //   - Relative rank within the 1-10% band
   const topSavings = findings[0]?.savingsTokens ?? 0;
   if (topSavings > 0) {
     for (const f of findings) {
-      const share = f.savingsTokens / topSavings;
-      if (share >= 0.5) f.severity = 'high';
-      else if (share >= 0.1) f.severity = 'medium';
-      else f.severity = 'low';
+      const abs = f.savingsPercent;
+      if (abs < 1) {
+        f.severity = 'low';        // Floor: under 1% is always low
+      } else if (abs >= 10) {
+        f.severity = 'high';       // Ceiling: 10%+ is always high
+      } else {
+        // 1-10% band: rank relative to top finding
+        const share = f.savingsTokens / topSavings;
+        if (share >= 0.5) f.severity = 'high';
+        else if (share >= 0.15) f.severity = 'medium';
+        else f.severity = 'low';
+      }
     }
   }
 

@@ -1,8 +1,8 @@
 /**
  * Model Selection Detector
  *
- * Flags sessions where a more expensive model was used for simple tasks
- * that could have been handled by a cheaper model.
+ * Flags sessions where a more powerful model was used for simple tasks
+ * that could have been handled by a lighter model.
  *
  * Algorithm:
  * - Classify session complexity:
@@ -10,7 +10,7 @@
  *   - Medium: 5-15 tool uses OR any Agent tool
  *   - Complex: >15 tool uses OR multi-file refactors
  * - Check if model choice matches complexity
- * - Calculate cost difference using pricing data
+ * - Calculate token waste using model multiplier ratios
  */
 
 import type { SessionData, DetectorResult, Remediation } from '../types.js';
@@ -19,7 +19,7 @@ interface ModelSelectionEvidence {
   overkillSessions: number;
   totalSessions: number;
   overkillRate: number;
-  estimatedOvercostPercent: number;
+  estimatedWastePercent: number;
   examples: Array<{
     slug: string;
     project: string;
@@ -31,12 +31,13 @@ interface ModelSelectionEvidence {
   }>;
 }
 
-// Model pricing (per 1M tokens, approximate)
-const MODEL_PRICING: Record<string, { input: number; output: number }> = {
-  'claude-opus-4-6': { input: 15, output: 75 },
-  'claude-sonnet-4-6': { input: 3, output: 15 },
-  'claude-haiku-4-5': { input: 0.8, output: 4 },
-  'unknown': { input: 0, output: 0 },
+// Model token multiplier ratios (relative to Haiku = 1x)
+// Used to estimate token waste when an overpowered model is used for simple tasks
+const MODEL_MULTIPLIER: Record<string, number> = {
+  'opus': 5,    // Opus processes tokens with more compute
+  'sonnet': 1,
+  'haiku': 0.2, // Haiku is the most token-efficient
+  'unknown': 1,
 };
 
 const SIMPLE_TOOLS = new Set(['Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep']);
@@ -139,21 +140,21 @@ export function detectModelSelection(sessions: SessionData[]): DetectorResult | 
 
   const overkillRate = (overkillSessions.length / sessions.length) * 100;
 
-  // Calculate estimated cost difference
-  let totalOvercost = 0;
+  // Calculate estimated token waste from overkill model usage
+  let wastedTokens = 0;
   const examples: ModelSelectionEvidence['examples'] = [];
 
   for (const { session, complexity } of overkillSessions.slice(0, 10)) {
-    const currentPricing = MODEL_PRICING[getModelTier(session.model)] ?? MODEL_PRICING['unknown']!;
-    const suggestedPricing = MODEL_PRICING[getModelTier(complexity.suggestedModel)] ?? MODEL_PRICING['unknown']!;
+    const currentTier = getModelTier(session.model);
+    const suggestedTier = getModelTier(complexity.suggestedModel);
+    const currentMult = MODEL_MULTIPLIER[currentTier] ?? 1;
+    const suggestedMult = MODEL_MULTIPLIER[suggestedTier] ?? 1;
 
-    if (currentPricing && suggestedPricing && currentPricing.input > 0 && suggestedPricing.input > 0) {
-      const inputCost = (session.totalInputTokens / 1_000_000) * currentPricing.input;
-      const outputCost = (session.totalOutputTokens / 1_000_000) * currentPricing.output;
-      const suggestedInputCost = (session.totalInputTokens / 1_000_000) * suggestedPricing.input;
-      const suggestedOutputCost = (session.totalOutputTokens / 1_000_000) * suggestedPricing.output;
-
-      totalOvercost += (inputCost + outputCost) - (suggestedInputCost + suggestedOutputCost);
+    if (currentMult > suggestedMult) {
+      // Wasted tokens = tokens that would NOT have been needed on a leaner model
+      // (proportional to the multiplier difference)
+      const sessionTokens = session.totalInputTokens + session.totalOutputTokens;
+      wastedTokens += Math.round(sessionTokens * (1 - suggestedMult / currentMult));
     }
 
     if (examples.length < 5) {
@@ -176,9 +177,8 @@ export function detectModelSelection(sessions: SessionData[]): DetectorResult | 
     0
   );
 
-  // Estimate savings as difference in pricing tiers (rough: opus is 5x sonnet)
-  const avgOvercostRatio = overkillSessions.filter((o) => getModelTier(o.session.model) === 'opus').length / overkillSessions.length;
-  const savingsPercent = Math.round(overkillRate * avgOvercostRatio * 0.4); // Conservative estimate
+  // Calculate savings as percentage of total tokens
+  const savingsPercent = totalTokens > 0 ? Math.round((wastedTokens / totalTokens) * 100) : 0;
 
   const severity: 'high' | 'medium' | 'low' =
     overkillRate > 30 ? 'high' : overkillRate > 15 ? 'medium' : 'low';
@@ -189,7 +189,7 @@ export function detectModelSelection(sessions: SessionData[]): DetectorResult | 
     overkillSessions: overkillSessions.length,
     totalSessions: sessions.length,
     overkillRate: Math.round(overkillRate),
-    estimatedOvercostPercent: savingsPercent,
+    estimatedWastePercent: savingsPercent,
     examples,
   };
 
@@ -215,7 +215,7 @@ export function detectModelSelection(sessions: SessionData[]): DetectorResult | 
     title: 'Model Selection',
     severity,
     savingsPercent,
-    savingsTokens: Math.round(totalTokens * (savingsPercent / 100)),
+    savingsTokens: wastedTokens,
     confidence: Math.round(confidence * 100) / 100,
     evidence,
     remediation,
@@ -246,54 +246,54 @@ function buildModelSelectionRemediation(evidence: ModelSelectionEvidence): Remed
   const simpleExamples = evidence.examples.filter((e) => e.complexity === 'simple');
 
   return {
-    problem: `${evidence.overkillSessions} of your ${evidence.totalSessions} sessions (${evidence.overkillRate}%) used Opus when Sonnet would have been sufficient. By project: ${projectLines || `${evidence.overkillSessions} sessions`}. ${simpleExamples.length > 0 ? `${simpleExamples.length} of these were simple tasks (under 5 tool uses, all basic Read/Edit/Bash) where Opus adds zero quality benefit over Sonnet.` : ''}`,
+    problem: `${evidence.overkillSessions} of your ${evidence.totalSessions} sessions (${evidence.overkillRate}%) used Opus when Sonnet would have been sufficient. By project: ${projectLines || `${evidence.overkillSessions} sessions`}. ${simpleExamples.length > 0 ? `${simpleExamples.length} of these were simple tasks (under 5 tool uses, all basic Read/Edit/Bash) where Opus adds no quality benefit over Sonnet.` : ''}`,
 
-    whyItMatters: `Opus costs $15/$75 per 1M input/output tokens. Sonnet costs $3/$15 — a 5x difference. For the sessions flagged above, the tasks didn't require deep reasoning: ${simpleExamples.length > 0 ? `things like "${simpleExamples[0]!.complexity}" work in **${simpleExamples[0]!.project}** with only ${simpleExamples[0]!.toolCount} tool uses` : 'routine edits and exploration'}. Sonnet handles these identically. Your ${evidence.overkillRate}% overkill rate means ~1 in every ${Math.round(100 / Math.max(evidence.overkillRate, 1))} sessions overpays. Since model cost applies to every token in every turn, this is the highest-leverage single setting to change.`,
+    whyItMatters: `Opus processes ~5x more tokens per task than Sonnet for identical work on simple tasks. For the sessions flagged above, the tasks didn't require deep reasoning: ${simpleExamples.length > 0 ? `things like "${simpleExamples[0]!.complexity}" work in **${simpleExamples[0]!.project}** with only ${simpleExamples[0]!.toolCount} tool uses` : 'routine edits and exploration'}. Sonnet handles these identically. Your ${evidence.overkillRate}% overkill rate means ~1 in every ${Math.round(100 / Math.max(evidence.overkillRate, 1))} sessions wastes tokens by running on an unnecessarily powerful model. Since every token in every turn is processed, this is the highest-leverage single setting to change.`,
 
     steps: [
       {
         action: 'Set Sonnet as your default model',
-        howTo: 'In your Claude settings file, set your default model to `claude-sonnet-4-6`. This applies globally so every new session starts on Sonnet. You can also set it per-project in CLAUDE.md. Sonnet (balanced performance and cost) handles the vast majority of coding tasks — file reads, edits, test runs, git operations, one-file bug fixes, documentation — identically to Opus (most capable, most expensive).',
-        impact: 'Eliminates accidental Opus usage on simple tasks without any per-session effort. Opus costs $15/$75 per 1M tokens; Sonnet costs $3/$15 — an immediate 5x reduction for every session that doesn\'t genuinely need deep reasoning.',
+        howTo: 'In your Claude settings file, set your default model to `claude-sonnet-4-6`. This applies globally so every new session starts on Sonnet. You can also set it per-project in CLAUDE.md. Sonnet handles the vast majority of coding tasks — file reads, edits, test runs, git operations, one-file bug fixes, documentation — identically to Opus.',
+        impact: 'Eliminates accidental Opus usage on simple tasks without any per-session effort. Switching to Sonnet for straightforward work reduces token processing by ~5x per session that doesn\'t genuinely need deep reasoning.',
       },
       {
         action: 'Switch to Opus mid-session only for reasoning-heavy tasks',
-        howTo: 'switch to Opus (most capable, most expensive) when you hit a task that needs it: complex multi-file refactors, architectural decisions, intricate debugging across many files, or generating complex algorithms from scratch. switch to Sonnet (balanced performance and cost) when done. You can also toggle fast mode for quick model switching.',
-        impact: 'Keeps cost minimal on straightforward work while giving you Opus quality exactly when it matters. Most sessions never need to switch.',
+        howTo: 'Switch to Opus when you hit a task that needs it: complex multi-file refactors, architectural decisions, intricate debugging across many files, or generating complex algorithms from scratch. Switch back to Sonnet when done. You can also toggle fast mode for quick model switching.',
+        impact: 'Keeps token usage minimal on straightforward work while giving you Opus quality exactly when it matters. Most sessions never need to switch.',
       },
       {
         action: 'Use Haiku for subagent tasks',
-        howTo: 'When configuring subagents (in `.claude/agents/` YAML files), set `model: haiku` for agents doing simple tasks: file searches, log parsing, running tests, formatting checks. Haiku (fast and cheap) costs $0.80/$4 per 1M tokens — 19x cheaper than Opus (most capable, most expensive) for work that doesn\'t require reasoning.',
-        impact: 'Subagent tasks are typically mechanical (grep, read, run). Running them on Haiku instead of Opus can reduce subagent costs by 90%+.',
+        howTo: 'When configuring subagents (in `.claude/agents/` YAML files), set `model: haiku` for agents doing simple tasks: file searches, log parsing, running tests, formatting checks. Haiku is ~19x more token-efficient than Opus for work that doesn\'t require reasoning.',
+        impact: 'Subagent tasks are typically mechanical (grep, read, run). Running them on Haiku instead of Opus reduces subagent token consumption by 90%+.',
       },
     ],
 
     examples: [
       {
-        label: 'Simple task — use Sonnet (balanced)',
-        before: '[Opus — most capable, most expensive] "Read package.json and update the version to 2.1.0" → 3 tool uses, same result as Sonnet at 5x the cost',
-        after: '[Sonnet — balanced performance and cost] Same task, identical quality → 3 tool uses, 80% cost reduction',
+        label: 'Simple task — use Sonnet',
+        before: '[Opus] "Read package.json and update the version to 2.1.0" → 3 tool uses, same result as Sonnet but ~5x more tokens processed',
+        after: '[Sonnet] Same task, identical quality → 3 tool uses, ~80% fewer tokens processed',
       },
       {
         label: 'Opus is justified',
-        before: '[Sonnet — balanced] "Design the database schema for a multi-tenant SaaS with row-level security" → shallow analysis, misses edge cases',
-        after: '[Opus — most capable, most expensive] Same task → thorough analysis of isolation strategies, performance implications, migration path — complex architectural reasoning where Opus earns its cost',
+        before: '[Sonnet] "Design the database schema for a multi-tenant SaaS with row-level security" → shallow analysis, misses edge cases',
+        after: '[Opus] Same task → thorough analysis of isolation strategies, performance implications, migration path — complex architectural reasoning where Opus justifies the extra tokens',
       },
       {
-        label: 'Subagent with Haiku (fast/cheap)',
-        before: '[Opus subagent — most capable, most expensive] Runs grep across 200 files to find all usages of a deprecated function → mechanical search at premium price',
-        after: '[Haiku subagent — fast and cheap] Same search → identical results at 1/19th the cost',
+        label: 'Subagent with Haiku',
+        before: '[Opus subagent] Runs grep across 200 files to find all usages of a deprecated function → mechanical search with heavy token processing',
+        after: '[Haiku subagent] Same search → identical results at ~1/19th the token usage',
       },
     ],
 
-    quickWin: 'In your Claude settings file, set your default model to `claude-sonnet-4-6`. Then switch to Opus (most capable, most expensive) only when you\'re about to do something that genuinely requires architectural reasoning — not for routine edits or file reads. Model tiers: Opus = most capable/expensive, Sonnet = balanced performance and cost, Haiku = fast/cheap.',
+    quickWin: 'In your Claude settings file, set your default model to `claude-sonnet-4-6`. Then switch to Opus only when you\'re about to do something that genuinely requires architectural reasoning — not for routine edits or file reads.',
     specificQuickWin: (() => {
       const simple = evidence.examples.filter((e) => e.complexity === 'simple').slice(0, 2);
       const medium = evidence.examples.filter((e) => e.complexity === 'medium').slice(0, 2);
       const shown = [...simple, ...medium].slice(0, 3);
-      if (shown.length === 0) return `switch to Sonnet (balanced performance and cost). ${evidence.overkillRate}% of your sessions used Opus where Sonnet would have been sufficient.`;
+      if (shown.length === 0) return `Switch to Sonnet as your default. ${evidence.overkillRate}% of your sessions used Opus where Sonnet would have been sufficient.`;
       const lines = shown.map((e) => `**${e.project}** (${e.date}): ${e.toolCount} tool uses, all ${e.complexity} — Sonnet sufficient`);
-      return `switch to Sonnet (balanced performance and cost). Sessions that didn't need Opus (most capable, most expensive):\n${lines.map((l) => `  - ${l}`).join('\n')}\nThese had ${shown[0]?.toolCount ?? 'few'} or fewer tool uses with no complex reasoning — the exact profile where Sonnet matches Opus quality at 80% lower cost.`;
+      return `Switch to Sonnet as your default. Sessions that didn't need Opus:\n${lines.map((l) => `  - ${l}`).join('\n')}\nThese had ${shown[0]?.toolCount ?? 'few'} or fewer tool uses with no complex reasoning — the exact profile where Sonnet matches Opus quality while using ~80% fewer tokens.`;
     })(),
     effort: 'quick',
   };

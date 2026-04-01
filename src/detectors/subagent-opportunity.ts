@@ -91,7 +91,7 @@ export function detectSubagentOpportunity(sessions: SessionData[]): DetectorResu
     0
   );
 
-  const savingsPercent = totalTokens > 0 ? Math.min(15, Math.round((estimatedSavings / totalTokens) * 100)) : 0;
+  const savingsPercent = totalTokens > 0 ? Math.round((estimatedSavings / totalTokens) * 100) : 0;
 
   const severity: 'high' | 'medium' | 'low' =
     opportunityRate > 40 ? 'high' : opportunityRate > 20 ? 'medium' : 'low';
@@ -173,9 +173,9 @@ function buildSubagentRemediation(evidence: SubagentEvidence, estimatedSavings: 
         impact: 'Prevents exploration chains entirely. One instruction file load replaces 5-20 file reads.',
       },
       {
-        action: 'Use a cheaper model for subagent tasks',
+        action: 'Use a lighter model for subagent tasks',
         howTo: 'When delegating to a subagent, consider requesting a lighter model for mechanical work: file searches, test runs, log parsing, dependency checks. Reserve more capable models for subagents that need deep reasoning or complex analysis. Mechanical exploration tasks produce the same results regardless of model tier.',
-        impact: 'Subagent tasks on lighter models cost 10-20x less per token, making delegation free from a cost perspective.',
+        impact: 'Subagent tasks on lighter models use 10-20x fewer tokens, making delegation highly efficient from a token perspective.',
       },
     ],
 

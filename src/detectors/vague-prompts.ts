@@ -192,7 +192,7 @@ export function detectVaguePrompts(sessions: SessionData[]): DetectorResult | nu
       sum + s.totalInputTokens + s.totalOutputTokens + s.totalCacheReadTokens + s.totalCacheCreationTokens,
     0
   );
-  const savingsPercent = totalTokens > 0 ? Math.min(10, Math.round((wastedTokens / totalTokens) * 100)) : 0;
+  const savingsPercent = totalTokens > 0 ? Math.round((wastedTokens / totalTokens) * 100) : 0;
 
   const severity: 'high' | 'medium' | 'low' =
     vagueRate > 40 ? 'high' : vagueRate > 20 ? 'medium' : 'low';

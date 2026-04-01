@@ -161,7 +161,7 @@ export function detectFileReadWaste(sessions: SessionData[]): DetectorResult | n
       sum + s.totalInputTokens + s.totalOutputTokens + s.totalCacheReadTokens + s.totalCacheCreationTokens,
     0
   );
-  const savingsPercent = totalTokens > 0 ? Math.min(50, Math.round((totalWastedTokens / totalTokens) * 100)) : 0;
+  const savingsPercent = totalTokens > 0 ? Math.round((totalWastedTokens / totalTokens) * 100) : 0;
 
   const severity: 'high' | 'medium' | 'low' =
     savingsPercent > 10 ? 'high' : savingsPercent > 5 ? 'medium' : 'low';
@@ -232,9 +232,9 @@ function buildFileReadRemediation(evidence: FileReadWasteEvidence): Remediation 
   const worst = evidence.topDuplicates[0];
 
   return {
-    problem: `Claude re-read the same files ${evidence.duplicateReads} times across ${evidence.sessionsWithWaste} sessions (${evidence.wasteRate}% of total) — without those files being modified in between. ${projectLines ? `By project: ${projectLines}. ` : ''}${evidence.generatedFileReads > 0 ? `Additionally, ${evidence.generatedFileReads} reads hit generated files (node_modules/, dist/, build/). ` : ''}In AI conversations, every Read operation sends the entire file contents into the context window — re-reading a file means paying the token cost again for content that is already available from a prior turn.`,
+    problem: `Claude re-read the same files ${evidence.duplicateReads} times across ${evidence.sessionsWithWaste} sessions (${evidence.wasteRate}% of total) — without those files being modified in between. ${projectLines ? `By project: ${projectLines}. ` : ''}${evidence.generatedFileReads > 0 ? `Additionally, ${evidence.generatedFileReads} reads hit generated files (node_modules/, dist/, build/). ` : ''}In AI conversations, every Read operation sends the entire file contents into the context window — re-reading a file means injecting the same tokens again for content that is already available from a prior turn.`,
 
-    whyItMatters: `${worst ? `Your single worst case: \`${worst.file}\` read ${worst.count} times in **${worst.project}** — that's ${worst.count - 1} unnecessary reads of the same content. ` : ''}Re-reading a file in an AI conversation is expensive because the entire file content is injected into the context window each time. Each duplicate read adds ~500–5,000 tokens depending on file size, for zero new information. Total estimated waste: ~${formattedTokens} tokens. In projects like **${worst?.project ?? 'your projects'}**, where the same config or core files get revisited repeatedly across a session, this compounds quickly — each redundant read also raises the context floor for all subsequent turns, making every future response more costly.`,
+    whyItMatters: `${worst ? `Your single worst case: \`${worst.file}\` read ${worst.count} times in **${worst.project}** — that's ${worst.count - 1} unnecessary reads of the same content. ` : ''}Re-reading a file in an AI conversation is wasteful because the entire file content is injected into the context window each time. Each duplicate read adds ~500–5,000 tokens depending on file size, for zero new information. Total estimated waste: ~${formattedTokens} tokens. In projects like **${worst?.project ?? 'your projects'}**, where the same config or core files get revisited repeatedly across a session, this compounds quickly — each redundant read also raises the context floor for all subsequent turns, making every future response consume more tokens.`,
 
     steps: [
       {
@@ -250,7 +250,7 @@ function buildFileReadRemediation(evidence: FileReadWasteEvidence): Remediation 
       {
         action: 'Use targeted reads with line ranges for large files',
         howTo: 'For large files, ask Claude to read specific sections: "Read lines 50-120 of database.ts" instead of the entire file. This is especially important for config files, test files, and generated code.',
-        impact: 'Reduces per-read token cost by 60-90% for large files, and the smaller payload stays in context more effectively.',
+        impact: 'Reduces per-read token usage by 60-90% for large files, and the smaller payload stays in context more effectively.',
       },
       ...(evidence.generatedFileReads > 0 ? [{
         action: 'Avoid reading generated/vendored files',

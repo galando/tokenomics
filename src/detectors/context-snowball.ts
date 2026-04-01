@@ -232,7 +232,7 @@ function buildSnowballRemediation(evidence: SnowballEvidence, totalExcessTokens:
   return {
     problem: `In ${evidence.sessionsWithSnowball} of your ${evidence.totalSessions} sessions (${evidence.snowballRate}%), the context window grew unchecked — averaging ${evidence.avgGrowthMultiplier}x expansion after turn ${avgTurn}. Affected projects: ${projectLines || 'multiple projects'}. Only ${evidence.compactUsedRate}% of sessions used /compact. The result: Claude re-reads the entire ballooning conversation on every turn, paying for stale tool outputs, old file contents, and resolved discussions.`,
 
-    whyItMatters: `Your worst session: ${worstDesc}, wasting ${worst ? (worst.excessTokens > 1_000_000 ? `${(worst.excessTokens / 1_000_000).toFixed(1)}M` : `${Math.round(worst.excessTokens / 1000)}K`) : '?'} tokens on redundant context. Across all affected sessions this totals ~${formattedExcess} excess tokens. The cost compounds: each new turn in a snowballed session is more expensive than the last because the context floor keeps rising. Large contexts also make Claude more likely to lose track of earlier decisions — particularly noticeable in long **${evidence.worstSessions[0]?.project ?? 'project'}** sessions where the original goal gets buried under tool outputs.`,
+    whyItMatters: `Your worst session: ${worstDesc}, wasting ${worst ? (worst.excessTokens > 1_000_000 ? `${(worst.excessTokens / 1_000_000).toFixed(1)}M` : `${Math.round(worst.excessTokens / 1000)}K`) : '?'} tokens on redundant context. Across all affected sessions this totals ~${formattedExcess} excess tokens. The token usage compounds: each new turn in a snowballed session consumes more tokens than the last because the context floor keeps rising. Large contexts also make Claude more likely to lose track of earlier decisions — particularly noticeable in long **${evidence.worstSessions[0]?.project ?? 'project'}** sessions where the original goal gets buried under tool outputs.`,
 
     steps: [
       {
@@ -243,7 +243,7 @@ function buildSnowballRemediation(evidence: SnowballEvidence, totalExcessTokens:
       {
         action: 'Start fresh when switching to an unrelated task',
         howTo: 'When you finish one task and want to start something completely different, don\'t carry the old context forward. First, name your session (type /rename followed by a descriptive name) so you can find it later. Then start a fresh session (type /clear to reset the context window) to begin the new task from scratch. If you ever need to return to the old work, resume a previous session (type /resume) to pick up exactly where you left off. Stale context from a previous task costs you tokens on every subsequent turn with zero benefit.',
-        impact: 'Starting fresh eliminates the entire prior context as a cost basis. The difference is large: a session at 100K context costs 5-10x more per turn than one starting at 10K.',
+        impact: 'Starting fresh eliminates the entire prior context. The difference is large: a session at 100K context uses 5-10x more tokens per turn than one starting at 10K.',
       },
       {
         action: 'Front-load your opening prompt to prevent exploration buildup',
