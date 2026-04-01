@@ -88,10 +88,10 @@ function detectorToInstruction(finding: DetectorResult): InstructionBlock | null
 
     case 'mcp-tool-tax': {
       const neverUsed = (evidence.neverUsedServers as string[]) ?? [];
-      const serverNames = neverUsed.length > 0 ? neverUsed.join(', ') : 'some servers';
+      if (neverUsed.length === 0) return null;
       return {
         category: 'model-recommendation',
-        instruction: `MCP server(s) **${serverNames}** are loaded but never used. Consider removing them to reduce per-session overhead.`,
+        instruction: `MCP server(s) **${neverUsed.join(', ')}** are loaded but never used. Consider removing them to reduce per-session overhead.`,
         sourceDetector: 'mcp-tool-tax',
         confidence: finding.confidence,
       };
@@ -117,6 +117,7 @@ function detectorToInstruction(finding: DetectorResult): InstructionBlock | null
 
     case 'claude-md-overhead': {
       const size = finding.savingsPercent;
+      if (size <= 0) return null;
       return {
         category: 'behavioral-coaching',
         instruction: `CLAUDE.md instructions may be adding overhead (~${size}% of session tokens). Keep instructions concise and remove redundant entries.`,

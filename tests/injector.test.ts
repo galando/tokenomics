@@ -69,13 +69,18 @@ describe('injector', () => {
     });
 
     it('generates instructions for all supported detectors', () => {
-      const detectors = [
-        'context-snowball', 'model-selection', 'vague-prompts',
-        'bash-output-bloat', 'file-read-waste', 'mcp-tool-tax',
-        'subagent-opportunity', 'session-timing', 'claude-md-overhead',
+      const findings = [
+        makeFinding({ detector: 'context-snowball' }),
+        makeFinding({ detector: 'model-selection' }),
+        makeFinding({ detector: 'vague-prompts' }),
+        makeFinding({ detector: 'bash-output-bloat' }),
+        makeFinding({ detector: 'file-read-waste' }),
+        makeFinding({ detector: 'mcp-tool-tax', evidence: { neverUsedServers: ['server-a'] } }),
+        makeFinding({ detector: 'subagent-opportunity' }),
+        makeFinding({ detector: 'session-timing' }),
+        makeFinding({ detector: 'claude-md-overhead', savingsPercent: 5 }),
       ];
 
-      const findings = detectors.map(d => makeFinding({ detector: d }));
       const instructions = findingsToInstructions(findings);
       expect(instructions).toHaveLength(9);
     });
@@ -93,6 +98,18 @@ describe('injector', () => {
 
     it('returns empty for empty findings', () => {
       const instructions = findingsToInstructions([]);
+      expect(instructions).toHaveLength(0);
+    });
+
+    it('returns null for mcp-tool-tax with no unused servers', () => {
+      const findings = [makeFinding({ detector: 'mcp-tool-tax', evidence: { neverUsedServers: [] } })];
+      const instructions = findingsToInstructions(findings);
+      expect(instructions).toHaveLength(0);
+    });
+
+    it('returns null for claude-md-overhead with 0% savings', () => {
+      const findings = [makeFinding({ detector: 'claude-md-overhead', savingsPercent: 0 })];
+      const instructions = findingsToInstructions(findings);
       expect(instructions).toHaveLength(0);
     });
   });
