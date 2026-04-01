@@ -2,6 +2,8 @@
 
 A CLI tool that analyzes your Claude Code session history to identify token waste patterns and provide actionable fixes. Runs locally, no LLM needed.
 
+**v1.3.0** introduces **native Claude Code integration** — tokenomics injects behavioral insights directly into your CLAUDE.md files and auto-updates via SessionStart hooks.
+
 ## Install
 
 ```bash
@@ -25,6 +27,37 @@ tokenomics --fix                  # Apply auto-fixable optimizations
 tokenomics --fix --dry-run        # Preview fixes without writing
 ```
 
+### Claude Code Integration
+
+```bash
+tokenomics --setup                # One-time: install hooks + inject findings into CLAUDE.md
+tokenomics --inject               # Re-analyze + update CLAUDE.md findings
+tokenomics --inject --quiet       # Silent mode (for hooks)
+```
+
+After `--setup`, every new Claude Code session automatically re-analyzes your usage and updates behavioral instructions in your CLAUDE.md. Claude adapts its behavior based on your actual patterns — no manual configuration needed.
+
+#### What gets injected
+
+Tokenomics writes a managed section between `<!-- TOKENOMICS:START -->` and `<!-- TOKENOMICS:END -->` markers. Everything outside these markers is never modified. Example:
+
+```markdown
+<!-- TOKENOMICS:START -->
+## Token Optimization Insights
+
+_Last updated: 2026-04-01_
+
+### Context Management
+- Your context snowballs at **turn 7** on average. Use `/compact` proactively after turn 5-7.
+
+### Prompt Quality
+- **15%** of your prompts are under 10 words. Include specific file paths and function names.
+
+### Model Usage
+- You use Opus for **40%** of simple tasks. Prefer **Sonnet** for editing and small fixes.
+<!-- TOKENOMICS:END -->
+```
+
 ## Options
 
 | Flag | Description | Default |
@@ -38,6 +71,9 @@ tokenomics --fix --dry-run        # Preview fixes without writing
 | `--claude-dir <path>` | Claude installation dir (default: auto-detect all `~/.claude*`) | auto |
 | `--fix` | Apply auto-fixable optimizations | false |
 | `--fix --dry-run` | Preview fixes without writing files | false |
+| `--setup` | One-time setup: install SessionStart hook + initial injection | false |
+| `--inject` | Re-analyze sessions + update CLAUDE.md findings | false |
+| `--quiet` | Suppress terminal output (used by hooks) | false |
 | `--verbose` | Show discovery progress and debug info | false |
 | `--help` | Show help message | - |
 | `--version` | Show version | - |
@@ -48,6 +84,8 @@ tokenomics --fix --dry-run        # Preview fixes without writing
    - Edits: `~/.claude/settings.json`
 2. **Remove never-used MCP servers** — reduces overhead on every session
    - Edits: `~/.claude.json`
+3. **Inject findings into CLAUDE.md** — behavioral coaching auto-applied
+   - Edits: `.claude/CLAUDE.md` (project) and `~/.claude/CLAUDE.md` (global)
 
 ## Detectors
 
