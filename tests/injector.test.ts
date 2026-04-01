@@ -32,7 +32,7 @@ describe('injector', () => {
     it('generates behavioral-coaching for context-snowball', () => {
       const findings = [makeFinding({
         detector: 'context-snowball',
-        evidence: { avgInflectionTurn: 8, snowballRate: 0.6 },
+        evidence: { avgInflectionTurn: 8, snowballRate: 60 },
       })];
 
       const instructions = findingsToInstructions(findings);
@@ -45,7 +45,7 @@ describe('injector', () => {
     it('generates model-recommendation for model-selection', () => {
       const findings = [makeFinding({
         detector: 'model-selection',
-        evidence: { overkillRate: 0.4 },
+        evidence: { overkillRate: 40 },
       })];
 
       const instructions = findingsToInstructions(findings);
@@ -58,7 +58,7 @@ describe('injector', () => {
     it('generates prompt-improvement for vague-prompts', () => {
       const findings = [makeFinding({
         detector: 'vague-prompts',
-        evidence: { vagueRate: 0.35 },
+        evidence: { vagueRate: 35 },
       })];
 
       const instructions = findingsToInstructions(findings);
@@ -171,7 +171,7 @@ describe('injector', () => {
       const existingContent = '# My Rules\nAlways use TypeScript.\n';
       await writeFile(join(claudeMdDir, 'CLAUDE.md'), existingContent, 'utf-8');
 
-      const findings = [makeFinding({ detector: 'model-selection', evidence: { overkillRate: 0.4 } })];
+      const findings = [makeFinding({ detector: 'model-selection', evidence: { overkillRate: 40 } })];
       await injectFindings(findings, projectDir);
 
       const content = await readFile(join(claudeMdDir, 'CLAUDE.md'), 'utf-8');
@@ -211,7 +211,7 @@ describe('injector', () => {
       await injectFindings(findings1, projectDir);
 
       // Second injection with different findings
-      const findings2 = [makeFinding({ detector: 'model-selection', evidence: { overkillRate: 0.5 } })];
+      const findings2 = [makeFinding({ detector: 'model-selection', evidence: { overkillRate: 50 } })];
       await injectFindings(findings2, projectDir);
 
       const content = await readFile(join(claudeMdDir, 'CLAUDE.md'), 'utf-8');

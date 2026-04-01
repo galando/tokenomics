@@ -38,7 +38,7 @@ function detectorToInstruction(finding: DetectorResult): InstructionBlock | null
   switch (finding.detector) {
     case 'context-snowball': {
       const avgTurn = Math.round((evidence.avgInflectionTurn as number) ?? 8);
-      const rate = Math.round(((evidence.snowballRate as number) ?? 0) * 100);
+      const rate = Math.round((evidence.snowballRate as number) ?? 0);
       return {
         category: 'behavioral-coaching',
         instruction: `Your context snowballs at **turn ${avgTurn}** on average (${rate}% of sessions). Use \`/compact\` proactively after turn ${Math.max(avgTurn - 2, 4)}-${avgTurn} on long sessions to prevent unbounded growth.`,
@@ -48,7 +48,7 @@ function detectorToInstruction(finding: DetectorResult): InstructionBlock | null
     }
 
     case 'model-selection': {
-      const overkillRate = Math.round(((evidence.overkillRate as number) ?? 0) * 100);
+      const overkillRate = Math.round((evidence.overkillRate as number) ?? 0);
       return {
         category: 'model-recommendation',
         instruction: `You use Opus/Claude for **${overkillRate}%** of simple tasks. Prefer **Sonnet** for editing, small fixes, and exploration tasks to reduce token usage by ~5x on those sessions.`,
@@ -58,7 +58,7 @@ function detectorToInstruction(finding: DetectorResult): InstructionBlock | null
     }
 
     case 'vague-prompts': {
-      const vagueRate = Math.round(((evidence.vagueRate as number) ?? 0) * 100);
+      const vagueRate = Math.round((evidence.vagueRate as number) ?? 0);
       return {
         category: 'prompt-improvement',
         instruction: `**${vagueRate}%** of your prompts are under 10 words. Include specific file paths, function names, and expected outcomes to reduce clarification rounds.`,
