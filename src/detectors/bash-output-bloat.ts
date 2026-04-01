@@ -141,7 +141,7 @@ export function detectBashOutputBloat(sessions: SessionData[]): DetectorResult |
       sum + s.totalInputTokens + s.totalOutputTokens + s.totalCacheReadTokens + s.totalCacheCreationTokens,
     0
   );
-  const savingsPercent = totalTokens > 0 ? Math.min(15, Math.round((wastedTokens / totalTokens) * 100)) : 0;
+  const savingsPercent = totalTokens > 0 ? Math.round((wastedTokens / totalTokens) * 100) : 0;
 
   const severity: 'high' | 'medium' | 'low' =
     savingsPercent > 5 ? 'high' : savingsPercent > 2 ? 'medium' : 'low';

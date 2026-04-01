@@ -56,7 +56,7 @@ function markdownToHtml(md: string): string {
 function severityConfig(s: Severity): { label: string; color: string; glow: string; explanation: string } {
   switch (s) {
     case 'high':
-      return { label: 'HIGH COST', color: '#ff4d6a', glow: 'rgba(255,77,106,0.4)', explanation: 'Significant token waste — fix this first for biggest savings' };
+      return { label: 'HIGH', color: '#ff4d6a', glow: 'rgba(255,77,106,0.4)', explanation: 'Significant token waste — fix this first for biggest savings' };
     case 'medium':
       return { label: 'MODERATE', color: '#ffbe2e', glow: 'rgba(255,190,46,0.3)', explanation: 'Noticeable waste — worth addressing for better efficiency' };
     case 'low':
@@ -65,12 +65,11 @@ function severityConfig(s: Severity): { label: string; color: string; glow: stri
 }
 
 function calculateHealthScore(findings: DetectorResult[]): { score: number; grade: string; color: string } {
-  const penaltyPerSeverity: Record<Severity, number> = { high: 18, medium: 10, low: 4 };
-  const penalty = findings.reduce(
-    (sum, f) => sum + penaltyPerSeverity[f.severity],
-    0
-  );
-  const score = Math.max(0, Math.min(100, Math.round(100 - penalty)));
+  // Health score based on actual savings percentage — proportional to real token waste
+  const totalWastePercent = findings.reduce((sum, f) => sum + f.savingsPercent, 0);
+  // Each % of waste costs ~2 points, capped at 100
+  const penalty = Math.min(100, Math.round(totalWastePercent * 2));
+  const score = Math.max(0, 100 - penalty);
 
   let grade: string;
   let color: string;
@@ -89,7 +88,7 @@ const DETECTOR_DESCRIPTIONS: Record<string, string> = {
   'file-read-waste': 'Re-reading files that Claude already has in context, or reading files speculatively without need.',
   'bash-output-bloat': 'Running commands that produce large output, all of which permanently enters the conversation context.',
   'vague-prompts': 'Starting conversations with unclear instructions, forcing exploration loops that waste tokens.',
-  'session-timing': 'Running sessions too long without clearing context, causing compounding token costs.',
+  'session-timing': 'Running sessions too long without clearing context, causing compounding token growth.',
   'subagent-opportunity': 'Doing exploration directly in the main conversation instead of delegating to isolated sub-sessions.',
   'claude-md-overhead': 'Large configuration files (CLAUDE.md) that are loaded into every conversation turn, even when irrelevant.',
   'mcp-tool-tax': 'External tool servers (MCP) loaded on every session but rarely used, adding overhead to each turn.',

@@ -118,7 +118,7 @@ export async function detectMcpToolTax(sessions: SessionData[]): Promise<Detecto
     0
   );
   const savingsPercent =
-    totalTokens > 0 ? Math.min(10, Math.round((totalOverhead / totalTokens) * 100)) : 0;
+    totalTokens > 0 ? Math.round((totalOverhead / totalTokens) * 100) : 0;
 
   const severity: 'high' | 'medium' | 'low' =
     neverUsedServers.length > 3 || savingsPercent > 5
@@ -220,7 +220,7 @@ function buildMcpToolTaxRemediation(
     specificQuickWin: (() => {
       if (neverUsedServers.length > 0) {
         const list = neverUsedServers.slice(0, 4).map((s) => `"${s}"`).join(', ');
-        return `Never-used MCP servers (0 of ${totalSessions} sessions): ${list}. Remove them from your Claude configuration file — every loaded server adds overhead to every single API call, even when unused, so these provide zero benefit at a measurable cost.`;
+        return `Never-used MCP servers (0 of ${totalSessions} sessions): ${list}. Remove them from your Claude configuration file — every loaded server adds overhead to every single API call, even when unused, so these provide zero benefit while wasting tokens.`;
       }
       const rare = rarelyUsedServers.slice(0, 3).map((s) => `"${s.name}" (${s.usageRate}% of sessions)`).join(', ');
       return `Rarely-used servers: ${rare}. Move these to a project-level Claude configuration file in the specific project that needs them instead of loading globally.`;

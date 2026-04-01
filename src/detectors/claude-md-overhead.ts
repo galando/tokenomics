@@ -145,7 +145,7 @@ export async function detectClaudeMdOverhead(
       sum + s.totalInputTokens + s.totalOutputTokens + s.totalCacheReadTokens + s.totalCacheCreationTokens,
     0
   );
-  const savingsPercent = totalTokens > 0 ? Math.min(20, Math.round((totalOverhead / totalTokens) * 100)) : 0;
+  const savingsPercent = totalTokens > 0 ? Math.round((totalOverhead / totalTokens) * 100) : 0;
 
   const severity: 'high' | 'medium' | 'low' =
     savingsPercent > 10 ? 'high' : savingsPercent > 5 ? 'medium' : 'low';
@@ -205,7 +205,7 @@ function buildClaudeMdRemediation(findings: ClaudeMdEvidence[]): Remediation {
       {
         action: 'Use hierarchical CLAUDE.md files',
         howTo: 'Put project-wide instructions in the root CLAUDE.md and module-specific instructions in subdirectory CLAUDE.md files. Claude only loads the relevant CLAUDE.md based on the working context, reducing overhead when working on specific modules.',
-        impact: 'Distributes instructions so only relevant ones are loaded per context, reducing per-turn token cost.',
+        impact: 'Distributes instructions so only relevant ones are loaded per context, reducing per-turn token overhead.',
       },
     ],
 
