@@ -17,16 +17,18 @@
 import { parseArgs } from 'node:util';
 import { execSync } from 'node:child_process';
 import { writeFileSync, mkdirSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { AnalysisOutput, CliOptions, DetectorResult, SessionData } from './types.js';
-import { discoverFiles, logDiscoverySummary, detectConfigPaths } from './discovery.js';
+import { discoverFiles, logDiscoverySummary } from './discovery.js';
 import { parseSessionFiles } from './parser.js';
 import { runAllDetectors, runAsyncDetectors } from './detectors/registry.js';
 import { renderHtmlReport } from './report-html.js';
+import { injectFindings } from './injector.js';
+import { installHooks } from './hooks.js';
+import { optimizeSettings, applySettings } from './optimizer.js';
 
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 
 // ─── CLI ──────────────────────────────────────────────────────────────────────
 
@@ -45,6 +47,9 @@ function parseCliArgs(): CliOptions {
       'claude-dir': { type: 'string', multiple: true },
       help: { type: 'boolean', default: false },
       version: { type: 'boolean', default: false },
+      inject: { type: 'boolean', default: false },
+      setup: { type: 'boolean', default: false },
+      quiet: { type: 'boolean', default: false },
     },
     strict: true,
   });
@@ -66,6 +71,9 @@ function parseCliArgs(): CliOptions {
     fix: values.fix,
     dryRun: values['dry-run'],
     claudeDirs: (values['claude-dir'] as string[] | undefined) ?? [],
+    inject: values.inject,
+    setup: values.setup,
+    quiet: values.quiet,
   };
 }
 
@@ -97,6 +105,11 @@ ANALYSIS
 FIXES
   --fix                Apply auto-fixable optimizations
   --fix --dry-run      Preview fixes without writing files
+
+INTEGRATION
+  --setup              One-time setup: install hooks + initial injection
+  --inject             Run analysis + inject findings into CLAUDE.md
+  --quiet              Suppress output (used by SessionStart hooks)
 
 OTHER
   --verbose            Show discovery progress and debug info
@@ -182,87 +195,6 @@ interface FixOutput {
   applied: AppliedFix[];
   skipped: Array<{ detector: string; reason: string }>;
   manual: ManualAction[];
-}
-
-async function fixModelSelection(_finding: DetectorResult, dryRun: boolean): Promise<AppliedFix | null> {
-  const configPaths = await detectConfigPaths();
-
-  for (const path of configPaths) {
-    try {
-      const raw = await readFile(path, 'utf-8');
-      const settings = JSON.parse(raw) as Record<string, unknown>;
-
-      const currentModel = (settings.model as string | undefined) ?? '(not set)';
-      if (currentModel.includes('sonnet') || currentModel.includes('haiku')) {
-        return null; // Already on a lighter model
-      }
-
-      const updated = { ...settings, model: 'claude-sonnet-4-6' };
-
-      if (!dryRun) {
-        await writeFile(path, JSON.stringify(updated, null, 2) + '\n', 'utf-8');
-      }
-
-      return {
-        detector: 'model-selection',
-        action: 'Set default model to claude-sonnet-4-6',
-        file: path,
-        before: `model: ${currentModel}`,
-        after: 'model: claude-sonnet-4-6',
-      };
-    } catch {
-      // File doesn't exist or isn't valid JSON — try next
-    }
-  }
-
-  return null;
-}
-
-async function fixMcpToolTax(finding: DetectorResult, dryRun: boolean): Promise<AppliedFix | null> {
-  const evidence = finding.evidence as {
-    neverUsedServers?: string[];
-    rarelyUsedServers?: Array<{ name: string; usageRate: number }>;
-  };
-
-  const neverUsed = evidence.neverUsedServers ?? [];
-  if (neverUsed.length === 0) return null;
-
-  const configPaths = await detectConfigPaths();
-
-  for (const configPath of configPaths) {
-    try {
-      const raw = await readFile(configPath, 'utf-8');
-      const config = JSON.parse(raw) as Record<string, unknown>;
-
-      if (!config.mcpServers || typeof config.mcpServers !== 'object') continue;
-
-      const servers = config.mcpServers as Record<string, unknown>;
-      const toRemove = neverUsed.filter((name) => name in servers);
-
-      if (toRemove.length === 0) continue;
-
-      const updated = { ...config, mcpServers: { ...servers } };
-      for (const name of toRemove) {
-        delete (updated.mcpServers as Record<string, unknown>)[name];
-      }
-
-      if (!dryRun) {
-        await writeFile(configPath, JSON.stringify(updated, null, 2) + '\n', 'utf-8');
-      }
-
-      return {
-        detector: 'mcp-tool-tax',
-        action: `Removed ${toRemove.length} never-used MCP server(s)`,
-        file: configPath,
-        before: `mcpServers: ${Object.keys(servers).join(', ')}`,
-        after: `mcpServers: ${Object.keys(updated.mcpServers as Record<string, unknown>).join(', ') || '(none)'}`,
-      };
-    } catch {
-      continue;
-    }
-  }
-
-  return null;
 }
 
 function buildManualActions(findings: DetectorResult[], includeFinding: boolean = false): FixOutput['manual'] {
@@ -530,6 +462,17 @@ function renderMarkdownReport(output: AnalysisOutput): string {
   return lines.join('\n');
 }
 
+// ─── Stubs for interactive fix (not yet implemented) ──────────────────────────
+
+function isInteractive(): boolean {
+  return process.stdout.isTTY === true;
+}
+
+async function renderInteractiveFix(_output: FixOutput, _data: { metadata: AnalysisOutput['metadata']; findings: DetectorResult[] }): Promise<void> {
+  // Fallback to non-interactive rendering
+  throw new Error('Interactive fix not implemented');
+}
+
 // ─── Main ──────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -579,45 +522,75 @@ async function main(): Promise<void> {
     console.error(`Found ${findings.length} patterns`);
   }
 
-  // ── Fix mode ──
-  if (options.fix) {
-    const fixOutput: FixOutput = {
-      dryRun: options.dryRun,
-      applied: [],
-      skipped: [],
-      manual: [],
-    };
+  // ── Setup mode ──
+  if (options.setup) {
+    const projectDir = process.cwd();
+    const hookResult = await installHooks();
+    const injectResult = await injectFindings(findings, projectDir);
 
-    for (const finding of findings) {
-      try {
-        let fix: AppliedFix | null = null;
+    if (!options.quiet) {
+      console.log('');
+      console.log('\x1b[1m\x1b[36m  TOKENOMICS SETUP\x1b[0m');
+      console.log('\x1b[2m  ' + '─'.repeat(56) + '\x1b[0m');
+      console.log('');
+      console.log(`  Hook:      ${hookResult.installed ? 'Installed' : 'Already installed'}`);
+      console.log(`  Settings:  ${hookResult.path}`);
+      console.log(`  Injected:  ${injectResult.instructionCount} instructions into ${injectResult.targets.length} CLAUDE.md file(s)`);
+      for (const target of injectResult.targets) {
+        const status = target.existed ? 'Updated' : 'Created';
+        console.log(`    ${status}: ${target.filePath}`);
+      }
+      console.log('');
+      console.log('  \x1b[32mSetup complete.\x1b[0m Findings will auto-inject on every new Claude Code session.');
+      console.log('');
+    }
+    return;
+  }
 
-        if (finding.detector === 'model-selection') {
-          fix = await fixModelSelection(finding, options.dryRun);
-          if (!fix) {
-            fixOutput.skipped.push({
-              detector: 'model-selection',
-              reason: 'Default model already sonnet/haiku, or settings file not found',
-            });
-          }
-        } else if (finding.detector === 'mcp-tool-tax') {
-          fix = await fixMcpToolTax(finding, options.dryRun);
-          if (!fix) {
-            fixOutput.skipped.push({
-              detector: 'mcp-tool-tax',
-              reason: 'No never-used servers found or config files not accessible',
-            });
-          }
-        }
+  // ── Inject mode ──
+  if (options.inject) {
+    const projectDir = process.cwd();
+    const result = await injectFindings(findings, projectDir);
 
-        if (fix) fixOutput.applied.push(fix);
-      } catch (err) {
-        fixOutput.skipped.push({
-          detector: finding.detector,
-          reason: `Error: ${err instanceof Error ? err.message : String(err)}`,
-        });
+    if (!options.quiet) {
+      if (result.changed) {
+        console.log(`Injected ${result.instructionCount} instructions into ${result.targets.length} CLAUDE.md file(s)`);
+      } else {
+        console.log('No changes needed — findings unchanged since last injection');
       }
     }
+    return;
+  }
+
+  // ── Fix mode ──
+  if (options.fix) {
+    // Use optimizer for structured settings changes
+    const suggestedChanges = optimizeSettings(findings);
+    const appliedChanges = await applySettings(suggestedChanges, !options.dryRun);
+
+    const fixOutput: FixOutput = {
+      dryRun: options.dryRun,
+      applied: appliedChanges
+        .filter(c => c.applied)
+        .map(c => ({
+          detector: c.change.type === 'model-default' ? 'model-selection' : 'mcp-tool-tax',
+          action: c.change.type === 'model-default'
+            ? `Set default model to ${c.change.suggested}`
+            : `Removed unused MCP server(s)`,
+          file: c.change.file,
+          before: c.change.current,
+          after: c.change.suggested,
+        })),
+      skipped: appliedChanges
+        .filter(c => !c.applied)
+        .map(c => ({
+          detector: c.change.type === 'model-default' ? 'model-selection' : 'mcp-tool-tax',
+          reason: c.change.type === 'model-default'
+            ? 'Default model already sonnet/haiku, or settings file not found'
+            : 'No never-used servers found or config files not accessible',
+        })),
+      manual: [],
+    };
 
     fixOutput.manual = buildManualActions(findings);
 
@@ -631,6 +604,15 @@ async function main(): Promise<void> {
     } else {
       renderFixOutput(fixOutput);
     }
+
+    // Also run injection after fixes
+    if (!options.dryRun) {
+      const injectResult = await injectFindings(findings, process.cwd());
+      if (!options.quiet && injectResult.changed) {
+        console.log(`\n  Injected ${injectResult.instructionCount} insights into CLAUDE.md`);
+      }
+    }
+
     return;
   }
 

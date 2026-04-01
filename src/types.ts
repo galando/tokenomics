@@ -344,7 +344,105 @@ export interface AnalysisOutput {
 }
 
 // ============================================================================
-// CLI Options
+// Detector Interface
+// ============================================================================
+
+export type DetectorFunction = (sessions: SessionData[]) => DetectorResult | null;
+
+export interface Detector {
+  name: string;
+  detect: DetectorFunction;
+}
+
+// ============================================================================
+// Discovery Options
+// ============================================================================
+
+export interface DiscoveryOptions {
+  days: number;
+  project?: string;
+  /** Single claude dir (for backward compat with fix module) */
+  claudeDir?: string;
+  /** Multiple explicit claude dirs (overrides auto-detect) */
+  claudeDirs?: string[];
+}
+
+// ============================================================================
+// Injection Types (Data Optimization Layer)
+// ============================================================================
+
+export interface InjectionTarget {
+  /** Absolute path to CLAUDE.md */
+  filePath: string;
+  /** Whether the file existed before injection */
+  existed: boolean;
+  /** Scope: 'global' or 'project' */
+  scope: 'global' | 'project';
+}
+
+export interface InstructionBlock {
+  /** Machine-readable category */
+  category: 'model-recommendation' | 'behavioral-coaching' | 'prompt-improvement' | 'general';
+  /** Human-readable instruction for Claude */
+  instruction: string;
+  /** Source detector */
+  sourceDetector: string;
+  /** Confidence of the underlying finding */
+  confidence: number;
+}
+
+export interface InjectionResult {
+  /** Files that were modified or created */
+  targets: InjectionTarget[];
+  /** Number of instruction blocks generated */
+  instructionCount: number;
+  /** Whether any file was actually changed */
+  changed: boolean;
+  /** Generated instructions (for dry-run preview) */
+  instructions: InstructionBlock[];
+}
+
+// ============================================================================
+// Settings Optimization Types
+// ============================================================================
+
+export interface SettingsChange {
+  /** What to change */
+  type: 'model-default' | 'mcp-server-remove';
+  /** File path being modified */
+  file: string;
+  /** Current value */
+  current: string;
+  /** Suggested value */
+  suggested: string;
+  /** Why this change is suggested */
+  reason: string;
+  /** Confidence 0-1 */
+  confidence: number;
+}
+
+export interface AppliedChange {
+  /** The change that was applied */
+  change: SettingsChange;
+  /** Whether it was actually applied (false in dry-run) */
+  applied: boolean;
+}
+
+// ============================================================================
+// Hook Types
+// ============================================================================
+
+export interface HookConfig {
+  /** Hook type in Claude Code settings */
+  type: 'SessionStart';
+  /** The command to run */
+  command: string;
+  /** Whether the hook is currently installed */
+  installed: boolean;
+}
+
+// ============================================================================
+// Extended CLI Options
 // ============================================================================
 
 export interface CliOptions {
@@ -370,28 +468,10 @@ export interface CliOptions {
   dryRun: boolean;
   /** Explicit Claude installation directories (overrides auto-detect) */
   claudeDirs: string[];
-}
-
-// ============================================================================
-// Detector Interface
-// ============================================================================
-
-export type DetectorFunction = (sessions: SessionData[]) => DetectorResult | null;
-
-export interface Detector {
-  name: string;
-  detect: DetectorFunction;
-}
-
-// ============================================================================
-// Discovery Options
-// ============================================================================
-
-export interface DiscoveryOptions {
-  days: number;
-  project?: string;
-  /** Single claude dir (for backward compat with fix module) */
-  claudeDir?: string;
-  /** Multiple explicit claude dirs (overrides auto-detect) */
-  claudeDirs?: string[];
+  /** Run injection only (no report) */
+  inject: boolean;
+  /** One-time setup: install hooks + initial injection */
+  setup: boolean;
+  /** Suppress output (used by SessionStart hooks) */
+  quiet: boolean;
 }
