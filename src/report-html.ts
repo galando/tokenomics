@@ -253,7 +253,12 @@ function renderDashboard(metadata: AnalysisOutput['metadata'], findings: Detecto
     : '0';
   const totalSavings = findings.reduce((s, f) => s + f.savingsPercent, 0);
 
-  return `<section class="dashboard" id="overview">
+  return `<details class="section-collapsible" id="collapsible-overview" open>
+  <summary class="section-collapsible-summary">
+    <svg viewBox="0 0 24 24" class="section-collapsible-chevron" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+    Overview
+  </summary>
+  <section class="dashboard section-collapsible-content" id="overview">
   <div class="bento-grid">
 
     <!-- Health ring -->
@@ -317,7 +322,8 @@ function renderDashboard(metadata: AnalysisOutput['metadata'], findings: Detecto
     </div>
 
   </div>
-</section>`;
+</section>
+</details>`;
 }
 
 function renderRemediationSteps(steps: Remediation['steps']): string {
@@ -372,8 +378,9 @@ function renderUnifiedFindings(findings: DetectorResult[]): string {
       ? f.remediation.problem.slice(0, 97).replace(/\s+\S*$/, '') + '...'
       : f.remediation.problem;
     const effortLabel = f.remediation.effort === 'quick' ? '< 5 MIN' : f.remediation.effort === 'moderate' ? '5-30 MIN' : '30+ MIN';
+    const detectorDesc = DETECTOR_DESCRIPTIONS[f.detector] ?? '';
 
-    return `<details class="finding-unified-row" id="finding-${f.detector}">
+    return `<details class="finding-unified-row" id="finding-${f.detector}" data-severity="${f.severity}" data-detector="${f.detector}" data-sort-savings="${f.savingsPercent}" data-sort-confidence="${f.confidence}" data-sort-name="${escapeHtml(f.title)}">
   <summary class="finding-summary" style="animation-delay:${i * 60}ms">
     <div class="finding-col finding-col--sev">
       <span class="sev-indicator" style="background:${sev.color};box-shadow:0 0 8px ${sev.glow}"></span>
@@ -395,19 +402,27 @@ function renderUnifiedFindings(findings: DetectorResult[]): string {
   </summary>
   <div class="finding-expanded">
     <div class="finding-detail-grid">
-      <div class="finding-section">
-        <div class="section-tag"><span class="section-hash">#</span>EVIDENCE</div>
-        <div class="section-content">${markdownToHtml(f.sessionBreakdown)}</div>
+      <div class="finding-section finding-meaning-card">
+        <div class="section-tag"><span class="section-hash">#</span>WHAT IT MEANS</div>
+        <div class="section-content">
+          <p class="meaning-problem">${escapeHtml(f.remediation.problem)}</p>
+          ${detectorDesc ? `<p class="meaning-context">${escapeHtml(detectorDesc)}</p>` : ''}
+        </div>
       </div>
       <div class="finding-section">
-        <div class="section-tag"><span class="section-hash">#</span>COST ANALYSIS</div>
+        <div class="section-tag"><span class="section-hash">#</span>COST IMPACT</div>
         <div class="section-content"><p>${escapeHtml(f.remediation.whyItMatters)}</p></div>
       </div>
     </div>
     <div class="finding-section">
-      <div class="section-tag"><span class="section-hash">#</span>REMEDIATION</div>
+      <div class="section-tag"><span class="section-hash">#</span>HOW TO FIX</div>
       <div class="section-content">${renderRemediationSteps(f.remediation.steps)}</div>
     </div>
+    <div class="finding-section">
+      <div class="section-tag"><span class="section-hash">#</span>EVIDENCE</div>
+      <div class="section-content">${markdownToHtml(f.sessionBreakdown)}</div>
+    </div>
+    ${renderBeforeAfter(f.remediation.examples)}
     <div class="quickwin-strip" style="border-color:${sev.color}40">
       <div class="quickwin-tag" style="background:${sev.color}18;color:${sev.color}">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
@@ -419,7 +434,40 @@ function renderUnifiedFindings(findings: DetectorResult[]): string {
 </details>`;
   }).join('\n');
 
-  return `<section class="findings-unified" id="findings">
+  const uniqueDetectors = [...new Set(findings.map(f => f.detector))].sort();
+  const detectorOptions = uniqueDetectors.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('');
+
+  const toolbar = `<div class="findings-toolbar">
+    <div class="filter-group">
+      <label class="filter-chip" data-sev-filter="high">
+        <input type="checkbox" value="high" checked />
+        <span class="filter-chip-label" style="--chip-color:var(--red)">HIGH</span>
+      </label>
+      <label class="filter-chip" data-sev-filter="medium">
+        <input type="checkbox" value="medium" checked />
+        <span class="filter-chip-label" style="--chip-color:var(--amber)">MODERATE</span>
+      </label>
+      <label class="filter-chip" data-sev-filter="low">
+        <input type="checkbox" value="low" checked />
+        <span class="filter-chip-label" style="--chip-color:var(--accent)">LOW</span>
+      </label>
+    </div>
+    <div class="filter-group">
+      <select class="filter-select" id="detector-filter">
+        <option value="">All detectors</option>
+        ${detectorOptions}
+      </select>
+    </div>
+    <span class="findings-count" id="findings-count">${findings.length} of ${findings.length} issues</span>
+    <button class="clear-filters-btn" id="clear-filters" style="display:none">Clear filters</button>
+  </div>`;
+
+  return `<details class="section-collapsible" id="collapsible-findings" open>
+  <summary class="section-collapsible-summary">
+    <svg viewBox="0 0 24 24" class="section-collapsible-chevron" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+    Findings
+  </summary>
+  <section class="findings-unified section-collapsible-content" id="findings">
   <div class="panel">
     <div class="panel-header">
       <span class="panel-tag">04</span>
@@ -427,18 +475,25 @@ function renderUnifiedFindings(findings: DetectorResult[]): string {
       <span class="panel-count">${findings.length} issue${findings.length !== 1 ? 's' : ''}</span>
     </div>
     <div class="panel-body panel-body--flush">
+      ${toolbar}
       <div class="findings-thead">
-        <span class="findings-th findings-th--sev">SEVERITY</span>
-        <span class="findings-th findings-th--name">DETECTOR</span>
-        <span class="findings-th findings-th--savings">SAVINGS</span>
-        <span class="findings-th findings-th--conf" data-tooltip="How certain the detector is that this pattern is real, based on how many sessions show it and how consistently">CONFIDENCE</span>
-        <span class="findings-th findings-th--summary">PROBLEM</span>
+        <span class="findings-th findings-th--sev" data-sort-key="severity" tabindex="0" role="button" aria-label="Sort by severity">SEVERITY</span>
+        <span class="findings-th findings-th--name" data-sort-key="name" tabindex="0" role="button" aria-label="Sort by detector">DETECTOR</span>
+        <span class="findings-th findings-th--savings" data-sort-key="savings" tabindex="0" role="button" aria-label="Sort by savings">SAVINGS</span>
+        <span class="findings-th findings-th--conf" data-sort-key="confidence" data-tooltip="How certain the detector is that this pattern is real, based on how many sessions show it and how consistently" tabindex="0" role="button" aria-label="Sort by confidence">CONFIDENCE</span>
+        <span class="findings-th findings-th--summary" data-sort-key="summary" tabindex="0" role="button" aria-label="Sort by problem description">PROBLEM</span>
         <span class="findings-th findings-th--chevron"></span>
       </div>
+      <div class="findings-tbody">
       ${findingRows}
-    </div>
+      <div class="empty-state" style="display:none">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        <p>No findings match your filters</p>
+      </div>
+      </div>
   </div>
-</section>`;
+</section>
+</details>`;
 }
 
 function renderFixSuggestions(findings: DetectorResult[]): string {
@@ -484,7 +539,12 @@ function renderFixSuggestions(findings: DetectorResult[]): string {
     </li>`;
   }).filter(Boolean).join('\n');
 
-  return `<section class="fix-suggestions" id="actions">
+  return `<details class="section-collapsible" id="collapsible-actions" open>
+  <summary class="section-collapsible-summary">
+    <svg viewBox="0 0 24 24" class="section-collapsible-chevron" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+    Actions
+  </summary>
+  <section class="fix-suggestions section-collapsible-content" id="actions">
   <div class="panel">
     <div class="panel-header">
       <span class="panel-tag">03</span>
@@ -532,7 +592,8 @@ function renderFixSuggestions(findings: DetectorResult[]): string {
       </div>
     </div>
   </div>
-</section>`;
+</section>
+</details>`;
 }
 
 function renderFooter(metadata: AnalysisOutput['metadata']): string {
@@ -646,7 +707,6 @@ body::before {
 .finding-unified-row[open] {
   position: relative;
   box-shadow: 0 0 0 1px var(--accent);
-}
 }
 
 /* ── Status text ── */
@@ -1023,6 +1083,203 @@ body::before {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-muted);
+  position: relative;
+  padding-right: 12px;
+}
+.findings-th:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Sort indicators */
+.findings-th.sort-asc::after,
+.findings-th.sort-desc::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 50%;
+  border: 4px solid transparent;
+}
+.findings-th.sort-desc::after {
+  border-top-color: var(--accent);
+  transform: translateY(-2px);
+}
+.findings-th.sort-asc::after {
+  border-bottom-color: var(--accent);
+  transform: translateY(-6px);
+}
+
+/* ── Filter Toolbar ── */
+.findings-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--grid-line);
+  flex-wrap: wrap;
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.filter-chip {
+  cursor: pointer;
+  position: relative;
+}
+.filter-chip input[type="checkbox"] {
+  position: absolute;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.filter-chip input[type="checkbox"]:focus-visible + .filter-chip-label {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.filter-chip-label {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  border: 1px solid var(--chip-color, var(--text-muted));
+  color: var(--chip-color, var(--text-muted));
+  background: transparent;
+  transition: all 0.15s;
+}
+.filter-chip input:checked + .filter-chip-label {
+  background: var(--chip-color, var(--text-muted));
+  color: var(--bg-base);
+  border-color: var(--chip-color, var(--text-muted));
+}
+.filter-chip:hover .filter-chip-label {
+  opacity: 0.85;
+}
+
+.filter-select {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--grid-line-strong);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%2364748b'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 24px;
+}
+
+.findings-count {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+  background: var(--bg-elevated);
+  padding: 3px 10px;
+  border-radius: 10px;
+  margin-left: auto;
+}
+
+.clear-filters-btn {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 3px 10px;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  transition: all 0.15s;
+}
+.clear-filters-btn:hover {
+  background: var(--accent);
+  color: var(--bg-base);
+}
+
+.finding-hidden {
+  display: none;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  color: var(--text-muted);
+  gap: 12px;
+}
+.empty-state svg {
+  opacity: 0.4;
+}
+.empty-state p {
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+}
+
+/* ── Meaning card ── */
+.meaning-problem {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  line-height: 1.6;
+  margin-bottom: 8px;
+}
+.meaning-context {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  font-style: italic;
+  line-height: 1.5;
+}
+
+/* ── Section collapsible ── */
+.section-collapsible {
+  margin-bottom: 16px;
+}
+.section-collapsible > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  list-style: none;
+  user-select: none;
+  border-bottom: 1px solid var(--grid-line);
+  margin-bottom: 0;
+}
+.section-collapsible > summary::-webkit-details-marker { display: none; }
+.section-collapsible > summary .section-collapsible-chevron {
+  width: 14px;
+  height: 14px;
+  transition: transform 0.2s;
+}
+.section-collapsible[open] > summary .section-collapsible-chevron {
+  transform: rotate(180deg);
+}
+.section-collapsible > summary:hover {
+  color: var(--text-secondary);
+}
+.section-collapsible-content {
+  /* content shown by default via open attr */
 }
 
 .finding-unified-row {
@@ -1536,6 +1793,25 @@ body::before {
   }
   .finding-col--summary { display: none; }
   .finding-col--chevron { display: none; }
+  .findings-toolbar {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 14px;
+  }
+  .filter-group {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .filter-select {
+    width: 100%;
+  }
+  .findings-count {
+    margin-left: 0;
+  }
+  .section-collapsible > summary {
+    padding: 10px 14px;
+    min-height: 44px;
+  }
 }
 
 @media (max-width: 600px) {
@@ -1545,6 +1821,44 @@ body::before {
   .metric-val { font-size: 1.4rem; }
   .bar-row { grid-template-columns: 1fr; gap: 4px; }
   .bar-label { text-align: left; }
+  .findings-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 10px 14px;
+  }
+  .filter-group {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .filter-chip-label {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 16px;
+  }
+  .filter-select {
+    width: 100%;
+    min-height: 44px;
+  }
+  .clear-filters-btn {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .findings-count {
+    text-align: center;
+  }
+  .finding-summary {
+    grid-template-columns: 1fr;
+    gap: 4px;
+    padding: 12px 14px;
+    min-height: 44px;
+  }
+  .section-collapsible > summary {
+    min-height: 44px;
+  }
 }
 
 /* ── prefers-reduced-motion ── */
@@ -1652,6 +1966,185 @@ function toggleTheme() {
   }, { threshold: 0.2 });
 
   document.querySelectorAll('.savings-bars').forEach(function(el) { observer.observe(el); });
+})();
+
+// ── Sortable column headers ──
+(function() {
+  var severityOrder = { high: 0, medium: 1, low: 2 };
+  var currentSort = null;
+  var currentDir = 'desc';
+
+  function sortRows(key, direction) {
+    var container = document.querySelector('.findings-tbody');
+    if (!container) return;
+    var rows = Array.prototype.slice.call(container.querySelectorAll('.finding-unified-row:not(.finding-hidden)'));
+    var hidden = Array.prototype.slice.call(container.querySelectorAll('.finding-unified-row.finding-hidden'));
+
+    rows.sort(function(a, b) {
+      var va, vb;
+      if (key === 'severity') {
+        va = severityOrder[a.getAttribute('data-severity')] ?? 9;
+        vb = severityOrder[b.getAttribute('data-severity')] ?? 9;
+      } else if (key === 'savings') {
+        va = parseFloat(a.getAttribute('data-sort-savings')) || 0;
+        vb = parseFloat(b.getAttribute('data-sort-savings')) || 0;
+      } else if (key === 'confidence') {
+        va = parseFloat(a.getAttribute('data-sort-confidence')) || 0;
+        vb = parseFloat(b.getAttribute('data-sort-confidence')) || 0;
+      } else if (key === 'name') {
+        va = (a.getAttribute('data-sort-name') || '').toLowerCase();
+        vb = (b.getAttribute('data-sort-name') || '').toLowerCase();
+        if (va < vb) return -1;
+        if (va > vb) return 1;
+        return 0;
+      } else if (key === 'summary') {
+        va = (a.getAttribute('data-sort-name') || '').toLowerCase();
+        vb = (b.getAttribute('data-sort-name') || '').toLowerCase();
+        if (va < vb) return direction === 'asc' ? -1 : 1;
+        if (va > vb) return direction === 'asc' ? 1 : -1;
+        return 0;
+      } else {
+        return 0;
+      }
+      if (typeof va === 'string') {
+        var cmp = va.localeCompare(vb);
+        return direction === 'asc' ? cmp : -cmp;
+      }
+      return direction === 'asc' ? va - vb : vb - va;
+    });
+
+    // Re-append visible rows first, then hidden
+    rows.forEach(function(r) { container.appendChild(r); });
+    hidden.forEach(function(r) { container.appendChild(r); });
+
+    // Update indicators
+    document.querySelectorAll('.findings-th').forEach(function(th) {
+      th.classList.remove('sort-asc', 'sort-desc');
+    });
+    var activeTh = document.querySelector('.findings-th[data-sort-key="' + key + '"]');
+    if (activeTh) {
+      activeTh.classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
+    }
+
+    currentSort = key;
+    currentDir = direction;
+  }
+
+  document.querySelectorAll('.findings-th[data-sort-key]').forEach(function(th) {
+    th.style.cursor = 'pointer';
+    function doSort() {
+      var key = th.getAttribute('data-sort-key');
+      if (!key) return;
+      var dir = (currentSort === key && currentDir === 'desc') ? 'asc' : 'desc';
+      sortRows(key, dir);
+    }
+    th.addEventListener('click', doSort);
+    th.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doSort(); }
+    });
+  });
+
+  // Expose for filter to re-sort after filtering
+  window.__tokenomicsSort = sortRows;
+  window.__tokenomicsSortState = function() { return { key: currentSort, dir: currentDir }; };
+})();
+
+// ── Filter toolbar logic ──
+(function() {
+  function applyFilters() {
+    var checkboxes = document.querySelectorAll('.filter-chip input[type="checkbox"]');
+    var activeSeverities = [];
+    checkboxes.forEach(function(cb) {
+      if (cb.checked) activeSeverities.push(cb.value);
+    });
+
+    var detectorSelect = document.getElementById('detector-filter');
+    var selectedDetector = detectorSelect ? detectorSelect.value : '';
+
+    var rows = document.querySelectorAll('.finding-unified-row');
+    var visibleCount = 0;
+    var totalCount = rows.length;
+
+    rows.forEach(function(row) {
+      var sev = row.getAttribute('data-severity');
+      var det = row.getAttribute('data-detector');
+      var matchesSev = activeSeverities.indexOf(sev) !== -1;
+      var matchesDet = !selectedDetector || det === selectedDetector;
+
+      if (matchesSev && matchesDet) {
+        row.classList.remove('finding-hidden');
+        visibleCount++;
+      } else {
+        row.classList.add('finding-hidden');
+      }
+    });
+
+    // Update count
+    var countEl = document.getElementById('findings-count');
+    if (countEl) countEl.textContent = visibleCount + ' of ' + totalCount + ' issues';
+
+    // Show/hide empty state
+    var emptyState = document.querySelector('.empty-state');
+    if (emptyState) emptyState.style.display = visibleCount === 0 ? 'flex' : 'none';
+
+    // Show/hide clear button
+    var clearBtn = document.getElementById('clear-filters');
+    var hasFilter = activeSeverities.length < checkboxes.length || selectedDetector;
+    if (clearBtn) clearBtn.style.display = hasFilter ? 'inline-flex' : 'none';
+
+    // Re-sort if sort is active
+    if (window.__tokenomicsSortState && window.__tokenomicsSort) {
+      var state = window.__tokenomicsSortState();
+      if (state.key) window.__tokenomicsSort(state.key, state.dir);
+    }
+  }
+
+  // Listen to checkbox changes
+  document.querySelectorAll('.filter-chip input[type="checkbox"]').forEach(function(cb) {
+    cb.addEventListener('change', applyFilters);
+  });
+
+  // Listen to detector dropdown
+  var detectorSelect = document.getElementById('detector-filter');
+  if (detectorSelect) detectorSelect.addEventListener('change', applyFilters);
+
+  // Clear filters button
+  var clearBtn = document.getElementById('clear-filters');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', function() {
+      document.querySelectorAll('.filter-chip input[type="checkbox"]').forEach(function(cb) {
+        cb.checked = true;
+      });
+      if (detectorSelect) detectorSelect.value = '';
+      applyFilters();
+    });
+  }
+})();
+
+// ── Collapsible sections with localStorage persistence ──
+(function() {
+  var collapsibles = document.querySelectorAll('.section-collapsible');
+  collapsibles.forEach(function(el) {
+    var id = el.id;
+    if (!id) return;
+
+    // Restore saved state
+    try {
+      var saved = localStorage.getItem('tokenomics-collapsed-' + id);
+      if (saved === 'closed') el.removeAttribute('open');
+    } catch(e) {}
+
+    el.addEventListener('toggle', function() {
+      try {
+        var key = 'tokenomics-collapsed-' + id;
+        if (el.hasAttribute('open')) {
+          localStorage.removeItem(key);
+        } else {
+          localStorage.setItem(key, 'closed');
+        }
+      } catch(e) {}
+    });
+  });
 })();
 </script>`;
 }
