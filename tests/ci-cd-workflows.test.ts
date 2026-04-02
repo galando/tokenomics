@@ -97,8 +97,8 @@ describe('Publish workflow (.github/workflows/publish.yml)', () => {
     pub = loadYaml('.github/workflows/publish.yml');
   });
 
-  it('triggers on v* tags', () => {
-    expect(pub.on.push.tags).toContain('v*');
+  it('triggers on GitHub Release published', () => {
+    expect(pub.on.release.types).toContain('published');
   });
 
   it('runs on ubuntu-latest', () => {
