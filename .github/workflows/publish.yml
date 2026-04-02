@@ -23,7 +23,9 @@ jobs:
 
       - name: Extract version from release tag
         id: version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "version=${TAG#v}" >> $GITHUB_OUTPUT
 
       - name: Bump version in package.json
         run: |
