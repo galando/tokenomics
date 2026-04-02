@@ -1,12 +1,11 @@
 name: Publish to npm
 
 on:
-  push:
-    tags:
-      - v*
+  release:
+    types: [published]
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 concurrency:
@@ -22,6 +21,18 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Extract version from release tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Bump version in package.json
+        run: |
+          CURRENT=$(node -p "require('./package.json').version")
+          TARGET="${{ steps.version.outputs.version }}"
+          if [ "$CURRENT" != "$TARGET" ]; then
+            npm version $TARGET --no-git-tag-version
+          fi
+
       - uses: actions/setup-node@v4
         with:
           node-version: 18
@@ -34,10 +45,10 @@ jobs:
 
       - run: npm test
 
-      - name: Verify version matches tag
+      - name: Verify version matches release
         run: |
-          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
           PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${{ steps.version.outputs.version }}"
           if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
             echo "Version mismatch: tag=$TAG_VERSION package.json=$PKG_VERSION"
             exit 1
