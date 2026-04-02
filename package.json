@@ -27,6 +27,10 @@
   ],
   "author": "",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/galando/tokenomics"
+  },
   "engines": {
     "node": ">=18"
   },
