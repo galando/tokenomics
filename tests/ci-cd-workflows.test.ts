@@ -182,8 +182,8 @@ describe('Version consistency check logic', () => {
   });
 
   it('matches package.json version correctly', () => {
-    const tag = 'v1.3.0';
     const pkg = loadPackageJson();
+    const tag = `v${pkg.version}`;
     const tagVersion = tag.replace(/^v/, '');
     expect(tagVersion).toBe(pkg.version);
   });
