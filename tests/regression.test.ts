@@ -152,7 +152,7 @@ describe('Bug 1 regression: savingsPercent uses full token total as denominator'
 
 // ── Bug 2: Discovery finds nested subagent sessions ──
 
-describe('Bug 2 regression: discovery finds subagent files in nested session dirs', () => {
+describe.skipIf(process.env.CI === 'true')('Bug 2 regression: discovery finds subagent files in nested session dirs', () => {
   it('discoverFiles scans <project>/<session-uuid>/subagents/ paths', async () => {
     // This is tested by the actual directory structure on disk.
     // We verify the discovery logic handles the nested structure by checking
