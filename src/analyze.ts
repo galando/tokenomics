@@ -27,6 +27,8 @@ import { renderHtmlReport } from './report-html.js';
 import { injectFindings } from './injector.js';
 import { installHooks } from './hooks.js';
 import { optimizeSettings, applySettings } from './optimizer.js';
+import { getAgentName } from './agents/registry.js';
+import { initializeDefaultAdapters } from './agents/registry.js';
 
 const VERSION = '1.3.0';
 
@@ -50,6 +52,9 @@ function parseCliArgs(): CliOptions {
       inject: { type: 'boolean', default: false },
       setup: { type: 'boolean', default: false },
       quiet: { type: 'boolean', default: false },
+      agent: { type: 'string', multiple: true },
+      agents: { type: 'boolean', default: false },
+      compare: { type: 'boolean', default: false },
     },
     strict: true,
   });
@@ -74,17 +79,19 @@ function parseCliArgs(): CliOptions {
     inject: values.inject,
     setup: values.setup,
     quiet: values.quiet,
+    agent: (values.agent as string[] | undefined) ?? [],
+    agents: values.agents,
+    compare: values.compare,
   };
 }
 
 function showHelp(): void {
   console.log(`
-tokenomics — Token Intelligence for Claude Code
+tokenomics — Token Intelligence for AI Coding Agents
 
-Analyzes your Claude Code session history to find token waste patterns
-and provides actionable recommendations. Runs locally, no LLM needed.
-
-Auto-detects all ~/.claude* installation directories.
+Analyzes your AI coding agent session history to find token waste patterns
+and provides actionable recommendations. Supports Claude Code, Cursor,
+Copilot, and Codex. Runs locally, no LLM needed.
 
 USAGE
   tokenomics [options]
@@ -99,6 +106,10 @@ OUTPUT MODES
 ANALYSIS
   --days <N>           Analyze last N days (default: 30)
   --project <P>        Filter to specific project path
+  --agent <name>       Filter to specific agent (can be repeated)
+                       Supported: claude-code, cursor, copilot, codex
+  --agents             List all detected agents
+  --compare            Show cross-agent comparison table
   --claude-dir <path>  Claude installation dir (default: auto-detect all)
                        Can be specified multiple times for custom selection
 
@@ -108,7 +119,7 @@ FIXES
 
 INTEGRATION
   --setup              One-time setup: install hooks + initial injection
-  --inject             Run analysis + inject findings into CLAUDE.md
+  --inject             Run analysis + inject findings into config files
   --quiet              Suppress output (used by SessionStart hooks)
 
 OTHER
@@ -118,17 +129,20 @@ OTHER
 
 WHAT --fix DOES
   1. Sets default model to Sonnet (saves ~5x tokens on simple sessions)
-     Edits: ~/.claude/settings.json (or equivalent)
+     Edits: ~/.claude/settings.json (or equivalent for other agents)
   2. Removes never-used MCP servers (reduces overhead on every session)
-     Edits: ~/.claude.json (or equivalent)
+     Edits: ~/.claude.json (or equivalent for other agents)
 
 EXAMPLES
-  tokenomics                        Quick terminal summary
+  tokenomics                        Quick terminal summary (all agents)
+  tokenomics --agent claude-code    Analyze only Claude Code sessions
+  tokenomics --agent cursor --agent codex   Analyze Cursor + Codex
+  tokenomics --agents               List detected agents
+  tokenomics --compare              Cross-agent comparison
   tokenomics --html                 Beautiful HTML dashboard
   tokenomics --json --days 7        Last week's data as JSON
   tokenomics --fix --dry-run        Preview auto-fixes
   tokenomics --fix                  Apply fixes
-  tokenomics --claude-dir ~/.claude-zai   Analyze specific installation
 `);
 }
 
@@ -156,6 +170,26 @@ function calculateMetadata(sessions: SessionData[]): AnalysisOutput['metadata'] 
     { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 }
   );
 
+  // Extract agent information
+  const agentIds = Array.from(new Set(sessions.map((s) => s.agent)));
+  const agentNames = agentIds.map((id) => getAgentName(id) ?? id);
+
+  // Calculate per-agent summaries
+  const agentSummaries = agentIds.map((agentId) => {
+    const agentSessions = sessions.filter((s) => s.agent === agentId);
+    const agentTokens = agentSessions.reduce(
+      (sum, s) => sum + s.totalInputTokens + s.totalOutputTokens + s.totalCacheReadTokens + s.totalCacheCreationTokens,
+      0
+    );
+
+    return {
+      agentId,
+      agentName: getAgentName(agentId) ?? agentId,
+      sessionCount: agentSessions.length,
+      totalTokens: agentTokens,
+    };
+  });
+
   return {
     generatedAt: new Date().toISOString(),
     sessionCount: sessions.length,
@@ -168,6 +202,8 @@ function calculateMetadata(sessions: SessionData[]): AnalysisOutput['metadata'] 
       total: totalTokens.input + totalTokens.output + totalTokens.cacheRead + totalTokens.cacheCreation,
     },
     version: VERSION,
+    agentNames: agentNames.length > 0 ? agentNames : undefined,
+    agentSummaries: agentSummaries.length > 1 ? agentSummaries : undefined,
   };
 }
 
@@ -331,8 +367,21 @@ function renderTerminalSummary(output: AnalysisOutput): void {
   ) || 30;
 
   console.log('');
-  console.log('\x1b[1m\x1b[36m  TOKENOMICS — Token Intelligence for Claude Code\x1b[0m');
+  console.log('\x1b[1m\x1b[36m  TOKENOMICS — Token Intelligence for AI Coding Agents\x1b[0m');
   console.log(`\x1b[2m  ${metadata.sessionCount} sessions // ${days} day range // v${VERSION}\x1b[0m`);
+
+  // Show agent breakdown if multiple agents
+  if (metadata.agentSummaries && metadata.agentSummaries.length > 1) {
+    console.log('');
+    console.log('  \x1b[1mAgents:\x1b[0m');
+    for (const agent of metadata.agentSummaries) {
+      const pct = metadata.totalTokens.total > 0
+        ? ((agent.totalTokens / metadata.totalTokens.total) * 100).toFixed(1)
+        : '0';
+      console.log(`  • ${agent.agentName}: ${agent.sessionCount} sessions, ${fmt(agent.totalTokens)} tokens (${pct}%)`);
+    }
+  }
+
   console.log('');
 
   // Metrics strip
@@ -478,16 +527,50 @@ async function renderInteractiveFix(_output: FixOutput, _data: { metadata: Analy
 async function main(): Promise<void> {
   const options = parseCliArgs();
 
+  // Initialize agent adapters
+  initializeDefaultAdapters();
+
   if (options.help) {
     showHelp();
     process.exit(0);
   }
 
+  // --agents flag: list detected agents
+  if (options.agents) {
+    const { detectInstalledAgents } = await import('./agents/registry.js');
+    const detected = await detectInstalledAgents();
+
+    console.log('');
+    console.log('\x1b[1m\x1b[36m  Detected Agents\x1b[0m');
+    console.log('\x1b[2m  ' + '─'.repeat(56) + '\x1b[0m');
+    console.log('');
+
+    if (detected.length === 0) {
+      console.log('  No agents detected.');
+    } else {
+      for (const agent of detected) {
+        const installed = await agent.detect();
+        void installed; // Used for detection side effect
+        console.log(`  \x1b[32m✓\x1b[0m ${agent.name} (${agent.id})`);
+      }
+    }
+
+    console.log('');
+    console.log(`  Total: ${detected.length} agent${detected.length !== 1 ? 's' : ''} detected`);
+    console.log('');
+    return;
+  }
+
   // Discover JSONL files (auto-detects all ~/.claude* installations)
-  const discoveryOpts: import('./types.js').DiscoveryOptions = {
+  const discoveryOpts: import('./types.js').DiscoveryOptions & { agentIds?: string[] } = {
     days: options.days,
     project: options.project,
   };
+
+  // Add agent filter if specified
+  if (options.agent.length > 0) {
+    discoveryOpts.agentIds = options.agent;
+  }
 
   // If user specified explicit claude-dir(s), use first one as primary
   if (options.claudeDirs.length > 0) {
@@ -511,7 +594,7 @@ async function main(): Promise<void> {
   const metadata = calculateMetadata(sessions);
 
   // Run all detectors
-  let findings = runAllDetectors(sessions);
+  let findings = await runAllDetectors(sessions);
   const asyncFindings = await runAsyncDetectors(sessions);
   findings = [...findings, ...asyncFindings];
 

@@ -7,7 +7,8 @@
  * - Generated file reads: Reading from dist/, node_modules/, etc.
  */
 
-import type { SessionData, DetectorResult, Remediation } from '../types.js';
+import type { SessionData, DetectorResult, Remediation, AgentContext } from '../types.js';
+import { mapToolName, adjustConfidenceForEstimates } from './agent-context.js';
 
 interface FileReadWasteEvidence {
   sessionsWithWaste: number;
@@ -47,7 +48,7 @@ function isGeneratedFile(path: string): boolean {
   return GENERATED_PATTERNS.some((p) => p.test(path));
 }
 
-export function detectFileReadWaste(sessions: SessionData[]): DetectorResult | null {
+export function detectFileReadWaste(sessions: SessionData[], _agentContext?: AgentContext): DetectorResult | null {
   if (sessions.length === 0) return null;
 
   let totalDuplicateReads = 0;
@@ -65,13 +66,16 @@ export function detectFileReadWaste(sessions: SessionData[]): DetectorResult | n
   }> = [];
 
   for (const session of sessions) {
+    const agentId = session.agent;
+
     // Track all file reads
     const fileReads = new Map<string, FileReadInfo>();
     let sessionWaste = false;
 
-    // Collect all Read tool uses
+    // Collect all Read tool uses (mapped to universal concept)
     for (const toolUse of session.toolUses) {
-      if (toolUse.name === 'Read') {
+      const universalTool = mapToolName(agentId, toolUse.name);
+      if (universalTool === 'read') {
         const filePath = toolUse.input.file_path as string;
         if (!filePath) continue;
 
@@ -143,7 +147,10 @@ export function detectFileReadWaste(sessions: SessionData[]): DetectorResult | n
 
   // Calculate wasted tokens (rough estimate)
   const avgInputTokensPerSession = sessions.reduce((sum, s) => sum + s.totalInputTokens, 0) / sessions.length;
-  const avgReadsPerSession = sessions.reduce((sum, s) => sum + s.toolUses.filter((t) => t.name === 'Read').length, 0) / sessions.length;
+  const avgReadsPerSession = sessions.reduce((sum, s) => {
+    const agentId = s.agent;
+    return sum + s.toolUses.filter((t) => mapToolName(agentId, t.name) === 'read').length;
+  }, 0) / sessions.length;
 
   if (avgReadsPerSession > 0) {
     const tokensPerRead = avgInputTokensPerSession / avgReadsPerSession;
@@ -166,7 +173,10 @@ export function detectFileReadWaste(sessions: SessionData[]): DetectorResult | n
   const severity: 'high' | 'medium' | 'low' =
     savingsPercent > 10 ? 'high' : savingsPercent > 5 ? 'medium' : 'low';
 
-  const confidence = Math.min(0.85, 0.4 + sessionsWithWaste * 0.02);
+  let confidence = Math.min(0.85, 0.4 + sessionsWithWaste * 0.02);
+
+  // Adjust confidence for estimated tokens
+  confidence = adjustConfidenceForEstimates(confidence, sessions);
 
   const evidence: FileReadWasteEvidence = {
     sessionsWithWaste,

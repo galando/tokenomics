@@ -1,0 +1,68 @@
+{
+  "id": "conv-001",
+  "createdAt": "2025-01-15T10:30:00Z",
+  "updatedAt": "2025-01-15T10:35:00Z",
+  "model": "gpt-4o",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Add a function to validate email addresses",
+      "timestamp": "2025-01-15T10:30:00Z"
+    },
+    {
+      "role": "assistant",
+      "content": "I'll create an email validation function for you using regex.",
+      "timestamp": "2025-01-15T10:30:05Z"
+    },
+    {
+      "role": "tool",
+      "toolName": "codebase_search",
+      "toolInput": {
+        "query": "email validation",
+        "filters": {
+          "fileExtensions": [".ts", ".js"]
+        }
+      },
+      "timestamp": "2025-01-15T10:30:10Z"
+    },
+    {
+      "role": "tool_result",
+      "content": "Found 3 matching files\n- src/utils/validators.ts\n- src/auth/email.ts\n- src/forms/contact.ts",
+      "timestamp": "2025-01-15T10:30:12Z"
+    },
+    {
+      "role": "assistant",
+      "content": "I found some existing validators. Let me create a new one in validators.ts:\n\n```typescript\nexport function validateEmail(email: string): boolean {\n  const regex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\n  return regex.test(email);\n}\n```",
+      "timestamp": "2025-01-15T10:30:20Z"
+    },
+    {
+      "role": "tool",
+      "toolName": "file_edit",
+      "toolInput": {
+        "filePath": "src/utils/validators.ts",
+        "newContent": "export function validateEmail(email: string): boolean {\n  const regex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\n  return regex.test(email);\n}\n"
+      },
+      "timestamp": "2025-01-15T10:30:25Z"
+    },
+    {
+      "role": "tool_result",
+      "content": "Successfully updated src/utils/validators.ts",
+      "timestamp": "2025-01-15T10:30:26Z"
+    },
+    {
+      "role": "user",
+      "content": "Can you also add a phone number validator?",
+      "timestamp": "2025-01-15T10:32:00Z"
+    },
+    {
+      "role": "assistant",
+      "content": "Sure, I'll add that too.",
+      "timestamp": "2025-01-15T10:32:05Z"
+    }
+  ],
+  "metadata": {
+    "projectPath": "/Users/dev/cursor-project",
+    "totalTokens": 1250,
+    "totalCost": 0.0025
+  }
+}

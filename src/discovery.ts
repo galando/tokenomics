@@ -3,12 +3,14 @@
  *
  * Auto-detects all ~/.claude* directories and discovers session files.
  * Supports --claude-dir flag for explicit override.
+ * Supports multi-agent discovery via agent registry.
  */
 
 import { readdir, stat } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import { homedir } from 'node:os';
 import type { DiscoveryOptions } from './types.js';
+import { discoverFilesByAgents } from './agents/registry.js';
 
 export interface DiscoveredFile {
   path: string;
@@ -19,6 +21,8 @@ export interface DiscoveredFile {
   size: number;
   /** Which Claude installation this file came from */
   sourceDir: string;
+  /** Which agent this file belongs to (for multi-agent support) */
+  agent?: string;
 }
 
 export function getDefaultClaudeDir(): string {
@@ -93,6 +97,30 @@ export async function detectConfigPaths(): Promise<string[]> {
 }
 
 export async function discoverFiles(options: DiscoveryOptions): Promise<DiscoveredFile[]> {
+  // Check if agent filtering is requested
+  const agentIds = options.agentIds;
+
+  if (agentIds && agentIds.length > 0) {
+    // Use agent registry for multi-agent discovery
+    const agentFiles = await discoverFilesByAgents(agentIds, {
+      days: options.days,
+      project: options.project,
+    });
+
+    // Convert agent DiscoveredFile to legacy format
+    return agentFiles.map((f) => ({
+      path: f.path,
+      projectPath: f.projectPath,
+      projectName: f.projectName,
+      sessionId: f.sessionId,
+      modifiedAt: f.modifiedAt,
+      size: f.size,
+      sourceDir: f.agent, // Use agent as sourceDir for compatibility
+      agent: f.agent,
+    }));
+  }
+
+  // Legacy Claude Code discovery (backward compatibility)
   // Determine which directories to scan
   let claudeDirs: string[];
   if (options.claudeDir) {
@@ -211,6 +239,7 @@ async function findJsonlFiles(
         modifiedAt: stats.mtime,
         size: stats.size,
         sourceDir,
+        agent: 'claude-code', // Default for backward compatibility
       });
     }
   } catch (error) {

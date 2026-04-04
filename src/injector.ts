@@ -1,12 +1,14 @@
 /**
  * Instruction Injection Engine — Data Optimization Layer
  *
- * Translates detector findings into CLAUDE.md behavioral instructions.
+ * Translates detector findings into agent-specific config instructions.
+ * Supports CLAUDE.md, .cursorrules, and other agent config files.
  * Uses managed block pattern (HTML comment markers) for non-destructive updates.
  */
 
 import type { DetectorResult, InstructionBlock, InjectionResult } from './types.js';
 import { findClaudeMdFiles, readClaudeMd, writeClaudeMd, fileExists, replaceManagedBlock } from './claude-config.js';
+import { getAdapter } from './agents/registry.js';
 
 const CONFIDENCE_THRESHOLD = 0.3;
 
@@ -32,16 +34,26 @@ export function findingsToInstructions(findings: DetectorResult[]): InstructionB
 /**
  * Map a single detector result to an instruction block.
  */
-function detectorToInstruction(finding: DetectorResult): InstructionBlock | null {
+function detectorToInstruction(finding: DetectorResult, agentId?: string): InstructionBlock | null {
   const evidence = finding.evidence as Record<string, unknown>;
 
   switch (finding.detector) {
     case 'context-snowball': {
       const avgTurn = Math.round((evidence.avgInflectionTurn as number) ?? 8);
       const rate = Math.round((evidence.snowballRate as number) ?? 0);
+
+      // Agent-specific compact commands
+      const compactCommand = agentId === 'cursor'
+        ? 'clear context and start fresh'
+        : agentId === 'copilot'
+        ? '/clear'
+        : agentId === 'codex'
+        ? 'reset session'
+        : '/compact';
+
       return {
         category: 'behavioral-coaching',
-        instruction: `Your context snowballs at **turn ${avgTurn}** on average (${rate}% of sessions). Use \`/compact\` proactively after turn ${Math.max(avgTurn - 2, 4)}-${avgTurn} on long sessions to prevent unbounded growth.`,
+        instruction: `Your context snowballs at **turn ${avgTurn}** on average (${rate}% of sessions). Use \`${compactCommand}\` proactively after turn ${Math.max(avgTurn - 2, 4)}-${avgTurn} on long sessions to prevent unbounded growth.`,
         sourceDetector: 'context-snowball',
         confidence: finding.confidence,
       };
@@ -49,9 +61,19 @@ function detectorToInstruction(finding: DetectorResult): InstructionBlock | null
 
     case 'model-selection': {
       const overkillRate = Math.round((evidence.overkillRate as number) ?? 0);
+
+      // Agent-specific model recommendations
+      const modelAdvice = agentId === 'cursor'
+        ? 'Prefer **GPT-4o** for editing and exploration, reserve Opus for complex tasks.'
+        : agentId === 'copilot'
+        ? 'Prefer **GPT-4o** over o1 for most tasks to reduce token usage.'
+        : agentId === 'codex'
+        ? 'Prefer **o4-mini** over o3 for simple tasks.'
+        : 'Prefer **Sonnet** for editing, small fixes, and exploration tasks to reduce token usage by ~5x on those sessions.';
+
       return {
         category: 'model-recommendation',
-        instruction: `You use Opus/Claude for **${overkillRate}%** of simple tasks. Prefer **Sonnet** for editing, small fixes, and exploration tasks to reduce token usage by ~5x on those sessions.`,
+        instruction: `You use overpowered models for **${overkillRate}%** of simple tasks. ${modelAdvice}`,
         sourceDetector: 'model-selection',
         confidence: finding.confidence,
       };
@@ -176,10 +198,12 @@ export function renderInstructionBlock(instructions: InstructionBlock[]): string
 
 /**
  * Main entry point: generate instructions, find targets, read, replace, write.
+ * Now supports agent-specific config files.
  */
 export async function injectFindings(
   findings: DetectorResult[],
   projectDir?: string,
+  agentId?: string,
 ): Promise<InjectionResult> {
   const instructions = findingsToInstructions(findings);
 
@@ -193,18 +217,35 @@ export async function injectFindings(
   }
 
   const renderedBlock = renderInstructionBlock(instructions);
-  const targets = findClaudeMdFiles(projectDir);
+
+  // Find agent-specific config paths
+  let configPaths: string[] = [];
+
+  if (agentId) {
+    // Get agent-specific config paths
+    const adapter = getAdapter(agentId);
+    if (adapter) {
+      configPaths = await adapter.getConfigPaths();
+    }
+  }
+
+  // Fall back to CLAUDE.md discovery for Claude Code or if no agent specified
+  if (configPaths.length === 0 && (!agentId || agentId === 'claude-code')) {
+    configPaths = findClaudeMdFiles(projectDir).map((t) => t.filePath);
+  }
+
+  const targets: Array<{ filePath: string; existed: boolean; scope: 'global' | 'project' }> = [];
   let changed = false;
 
-  for (const target of targets) {
-    const existed = await fileExists(target.filePath);
-    target.existed = existed;
+  for (const filePath of configPaths) {
+    const existed = await fileExists(filePath);
+    targets.push({ filePath, existed, scope: 'project' });
 
-    const existingContent = await readClaudeMd(target.filePath);
+    const existingContent = await readClaudeMd(filePath);
     const newContent = replaceManagedBlock(existingContent, renderedBlock);
 
     if (newContent !== existingContent) {
-      await writeClaudeMd(target.filePath, newContent);
+      await writeClaudeMd(filePath, newContent);
       changed = true;
     }
   }

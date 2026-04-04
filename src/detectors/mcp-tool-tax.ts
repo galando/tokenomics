@@ -8,7 +8,8 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import type { SessionData, DetectorResult, Remediation } from '../types.js';
+import type { SessionData, DetectorResult, Remediation, AgentContext } from '../types.js';
+import { adjustConfidenceForEstimates } from './agent-context.js';
 
 interface McpServerUsage {
   name: string;
@@ -40,8 +41,17 @@ function extractServerName(toolName: string): string | null {
   return null;
 }
 
-export async function detectMcpToolTax(sessions: SessionData[]): Promise<DetectorResult | null> {
+export async function detectMcpToolTax(
+  sessions: SessionData[],
+  _agentContext?: AgentContext
+): Promise<DetectorResult | null> {
   if (sessions.length === 0) return null;
+
+  // This detector only supports Claude Code and Cursor (both support MCP)
+  const supportedSessions = sessions.filter((s) =>
+    s.agent === 'claude-code' || s.agent === 'cursor'
+  );
+  if (supportedSessions.length === 0) return null;
 
   const serverUsage = new Map<string, Set<string>>();
 
@@ -110,9 +120,9 @@ export async function detectMcpToolTax(sessions: SessionData[]): Promise<Detecto
 
   const totalOverhead =
     rarelyUsedServers.reduce((sum, s) => sum + s.estimatedOverhead, 0) +
-    neverUsedServers.length * sessions.length * 200;
+    neverUsedServers.length * supportedSessions.length * 200;
 
-  const totalTokens = sessions.reduce(
+  const totalTokens = supportedSessions.reduce(
     (sum, s) =>
       sum + s.totalInputTokens + s.totalOutputTokens + s.totalCacheReadTokens + s.totalCacheCreationTokens,
     0
@@ -127,7 +137,10 @@ export async function detectMcpToolTax(sessions: SessionData[]): Promise<Detecto
         ? 'medium'
         : 'low';
 
-  const confidence = Math.min(0.9, 0.5 + sessions.length * 0.01);
+  let confidence = Math.min(0.9, 0.5 + supportedSessions.length * 0.01);
+
+  // Adjust confidence for estimated tokens
+  confidence = adjustConfidenceForEstimates(confidence, sessions);
 
   const recommendation =
     neverUsedServers.length > 0

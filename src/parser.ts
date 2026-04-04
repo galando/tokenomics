@@ -208,6 +208,8 @@ function buildSessionData(records: JsonlRecord[], file: DiscoveredFile): Session
 
   return {
     id: sessionId,
+    agent: 'claude-code', // Will be overridden by adapter
+    rawTokenCounts: true, // Claude Code reports actual token counts
     project: extractProjectName(cwd),
     projectPath: cwd,
     slug,

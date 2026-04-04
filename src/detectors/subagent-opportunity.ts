@@ -5,7 +5,8 @@
  * instead of reading files directly in the main context.
  */
 
-import type { SessionData, DetectorResult, Remediation } from '../types.js';
+import type { SessionData, DetectorResult, Remediation, AgentContext } from '../types.js';
+import { mapToolName, adjustConfidenceForEstimates } from './agent-context.js';
 
 interface SubagentEvidence {
   sessionsWithOpportunity: number;
@@ -22,13 +23,15 @@ interface SubagentEvidence {
 }
 
 function findReadChains(session: SessionData): { chainLength: number; filesExplored: number } | null {
-  const readTools = ['Read', 'Glob', 'Grep'];
+  const agentId = session.agent;
+  const readTools = ['read', 'search']; // Universal tool names
   let chainLength = 0;
   let maxChain = 0;
   let totalFiles = 0;
 
   for (const tool of session.toolUses) {
-    if (readTools.includes(tool.name)) {
+    const universalTool = mapToolName(agentId, tool.name);
+    if (readTools.includes(universalTool)) {
       chainLength++;
       totalFiles++;
       maxChain = Math.max(maxChain, chainLength);
@@ -43,8 +46,12 @@ function findReadChains(session: SessionData): { chainLength: number; filesExplo
   return null;
 }
 
-export function detectSubagentOpportunity(sessions: SessionData[]): DetectorResult | null {
+export function detectSubagentOpportunity(sessions: SessionData[], _agentContext?: AgentContext): DetectorResult | null {
   if (sessions.length === 0) return null;
+
+  // This detector only supports Claude Code
+  const claudeSessions = sessions.filter((s) => s.agent === 'claude-code');
+  if (claudeSessions.length === 0) return null;
 
   const opportunities: Array<{
     session: SessionData;
@@ -52,7 +59,7 @@ export function detectSubagentOpportunity(sessions: SessionData[]): DetectorResu
     filesExplored: number;
   }> = [];
 
-  for (const session of sessions) {
+  for (const session of claudeSessions) {
     const result = findReadChains(session);
     if (result) {
       opportunities.push({
@@ -96,11 +103,14 @@ export function detectSubagentOpportunity(sessions: SessionData[]): DetectorResu
   const severity: 'high' | 'medium' | 'low' =
     opportunityRate > 40 ? 'high' : opportunityRate > 20 ? 'medium' : 'low';
 
-  const confidence = Math.min(0.85, 0.5 + opportunities.length * 0.03);
+  let confidence = Math.min(0.85, 0.5 + opportunities.length * 0.03);
+
+  // Adjust confidence for estimated tokens
+  confidence = adjustConfidenceForEstimates(confidence, sessions);
 
   const evidence: SubagentEvidence = {
     sessionsWithOpportunity: opportunities.length,
-    totalSessions: sessions.length,
+    totalSessions: claudeSessions.length,
     opportunityRate: Math.round(opportunityRate),
     avgChainLength: Math.round(avgChainLength * 10) / 10,
     examples,

@@ -9,7 +9,8 @@
  * - Usage checks: --help and --version commands
  */
 
-import type { SessionData, DetectorResult, Remediation } from '../types.js';
+import type { SessionData, DetectorResult, Remediation, AgentContext } from '../types.js';
+import { mapToolName, adjustConfidenceForEstimates } from './agent-context.js';
 
 interface BashOutputBloatEvidence {
   sessionsWithBloat: number;
@@ -73,7 +74,7 @@ function detectBloatPatterns(command: string): BloatMatch[] {
   return matches;
 }
 
-export function detectBashOutputBloat(sessions: SessionData[]): DetectorResult | null {
+export function detectBashOutputBloat(sessions: SessionData[], _agentContext?: AgentContext): DetectorResult | null {
   if (sessions.length === 0) return null;
 
   const categoryCounts = {
@@ -93,10 +94,12 @@ export function detectBashOutputBloat(sessions: SessionData[]): DetectorResult |
   let sessionsWithBloat = 0;
 
   for (const session of sessions) {
+    const agentId = session.agent;
     let sessionBloat = false;
 
     for (const toolUse of session.toolUses) {
-      if (toolUse.name !== 'Bash') continue;
+      const universalTool = mapToolName(agentId, toolUse.name);
+      if (universalTool !== 'bash') continue;
 
       const command = (toolUse.input.command ?? toolUse.input.cmd) as string;
       if (!command) continue;
@@ -146,7 +149,10 @@ export function detectBashOutputBloat(sessions: SessionData[]): DetectorResult |
   const severity: 'high' | 'medium' | 'low' =
     savingsPercent > 5 ? 'high' : savingsPercent > 2 ? 'medium' : 'low';
 
-  const confidence = Math.min(0.8, 0.4 + sessionsWithBloat * 0.015);
+  let confidence = Math.min(0.8, 0.4 + sessionsWithBloat * 0.015);
+
+  // Adjust confidence for estimated tokens
+  confidence = adjustConfidenceForEstimates(confidence, sessions);
 
   const evidence: BashOutputBloatEvidence = {
     sessionsWithBloat,

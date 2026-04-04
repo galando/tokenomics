@@ -2,6 +2,7 @@
  * Context Snowball Detector
  *
  * Detects sessions where context grows unboundedly without /compact intervention.
+ * This is a universal detector — context growth is agent-agnostic.
  *
  * Algorithm:
  * - Build context series using totalContext = inputTokens + cacheReadTokens + cacheCreationTokens/2
@@ -13,8 +14,9 @@
  * - Detect topic shifts using Jaccard similarity
  */
 
-import type { SessionData, DetectorResult, Remediation } from '../types.js';
+import type { SessionData, DetectorResult, Remediation, AgentContext } from '../types.js';
 import { getContextTurns } from '../parser.js';
+import { adjustConfidenceForEstimates } from './agent-context.js';
 
 interface SnowballEvidence {
   sessionsWithSnowball: number;
@@ -48,7 +50,7 @@ const MIN_CONTEXT_THRESHOLD = 500; // Ignore turns with less than this
 const SNOWBALL_MULTIPLIER = 2.5; // Context must grow this much to be snowball
 const MIN_TURNS_FOR_ANALYSIS = 3; // Need at least this many turns
 
-export function detectContextSnowball(sessions: SessionData[]): DetectorResult | null {
+export function detectContextSnowball(sessions: SessionData[], _agentContext?: AgentContext): DetectorResult | null {
   if (sessions.length === 0) return null;
 
   const snowballs: SessionSnowball[] = [];
@@ -155,7 +157,10 @@ export function detectContextSnowball(sessions: SessionData[]): DetectorResult |
   }
 
   // Confidence based on sample size and consistency
-  const confidence = Math.min(0.95, 0.5 + snowballs.length * 0.05 + (1 - compactUsedRate) * 0.2);
+  let confidence = Math.min(0.95, 0.5 + snowballs.length * 0.05 + (1 - compactUsedRate) * 0.2);
+
+  // Adjust confidence for estimated tokens
+  confidence = adjustConfidenceForEstimates(confidence, sessions);
 
   const evidence: SnowballEvidence = {
     sessionsWithSnowball: snowballs.length,
