@@ -9,7 +9,8 @@
 
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { SessionData, DetectorResult, Remediation } from '../types.js';
+import type { SessionData, DetectorResult, Remediation, AgentContext } from '../types.js';
+import { adjustConfidenceForEstimates } from './agent-context.js';
 
 interface ClaudeMdEvidence {
   project: string;
@@ -75,9 +76,14 @@ function detectSkillCandidates(content: string): string[] {
 }
 
 export async function detectClaudeMdOverhead(
-  sessions: SessionData[]
+  sessions: SessionData[],
+  _agentContext?: AgentContext
 ): Promise<DetectorResult | null> {
   if (sessions.length === 0) return null;
+
+  // This detector only supports Claude Code
+  const claudeSessions = sessions.filter((s) => s.agent === 'claude-code');
+  if (claudeSessions.length === 0) return null;
 
   // Group sessions by project path
   const projectSessions = new Map<string, SessionData[]>();
@@ -140,7 +146,7 @@ export async function detectClaudeMdOverhead(
   // Sort by overhead
   findings.sort((a, b) => b.estimatedOverhead - a.estimatedOverhead);
 
-  const totalTokens = sessions.reduce(
+  const totalTokens = claudeSessions.reduce(
     (sum, s) =>
       sum + s.totalInputTokens + s.totalOutputTokens + s.totalCacheReadTokens + s.totalCacheCreationTokens,
     0
@@ -150,7 +156,10 @@ export async function detectClaudeMdOverhead(
   const severity: 'high' | 'medium' | 'low' =
     savingsPercent > 10 ? 'high' : savingsPercent > 5 ? 'medium' : 'low';
 
-  const confidence = Math.min(0.85, 0.5 + findings.length * 0.05);
+  let confidence = Math.min(0.85, 0.5 + findings.length * 0.05);
+
+  // Adjust confidence for estimated tokens
+  confidence = adjustConfidenceForEstimates(confidence, sessions);
 
   const remediation = buildClaudeMdRemediation(findings);
 

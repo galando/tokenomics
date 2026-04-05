@@ -8,7 +8,8 @@
  * - Sessions that end without clear outcome
  */
 
-import type { SessionData, DetectorResult, Remediation } from '../types.js';
+import type { SessionData, DetectorResult, Remediation, AgentContext } from '../types.js';
+import { adjustConfidenceForEstimates } from './agent-context.js';
 
 interface VaguePromptsEvidence {
   sessionsWithVaguePrompts: number;
@@ -95,7 +96,7 @@ function estimateClarificationRounds(session: SessionData): number {
   return rounds;
 }
 
-export function detectVaguePrompts(sessions: SessionData[]): DetectorResult | null {
+export function detectVaguePrompts(sessions: SessionData[], _agentContext?: AgentContext): DetectorResult | null {
   if (sessions.length === 0) return null;
 
   const vagueSessions: Array<{
@@ -197,7 +198,10 @@ export function detectVaguePrompts(sessions: SessionData[]): DetectorResult | nu
   const severity: 'high' | 'medium' | 'low' =
     vagueRate > 40 ? 'high' : vagueRate > 20 ? 'medium' : 'low';
 
-  const confidence = Math.min(0.85, 0.5 + vagueSessions.length * 0.02);
+  let confidence = Math.min(0.85, 0.5 + vagueSessions.length * 0.02);
+
+  // Adjust confidence for estimated tokens
+  confidence = adjustConfidenceForEstimates(confidence, sessions);
 
   const evidence: VaguePromptsEvidence = {
     sessionsWithVaguePrompts: vagueSessions.length,

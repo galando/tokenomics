@@ -3,17 +3,19 @@
  *
  * Flags sessions where a more powerful model was used for simple tasks
  * that could have been handled by a lighter model.
+ * Agent-aware: supports Claude Code, Cursor, Copilot, Codex.
  *
  * Algorithm:
  * - Classify session complexity:
  *   - Simple: <5 tool uses, all Read/Edit/Bash
  *   - Medium: 5-15 tool uses OR any Agent tool
  *   - Complex: >15 tool uses OR multi-file refactors
- * - Check if model choice matches complexity
+ * - Check if model choice matches complexity (per-agent model tiers)
  * - Calculate token waste using model multiplier ratios
  */
 
-import type { SessionData, DetectorResult, Remediation } from '../types.js';
+import type { SessionData, DetectorResult, Remediation, AgentContext } from '../types.js';
+import { mapToolName, adjustConfidenceForEstimates } from './agent-context.js';
 
 interface ModelSelectionEvidence {
   overkillSessions: number;
@@ -31,16 +33,48 @@ interface ModelSelectionEvidence {
   }>;
 }
 
-// Model token multiplier ratios (relative to Haiku = 1x)
+// Model token multiplier ratios (relative to baseline = 1x)
 // Used to estimate token waste when an overpowered model is used for simple tasks
 const MODEL_MULTIPLIER: Record<string, number> = {
-  'opus': 5,    // Opus processes tokens with more compute
+  // Claude models
+  'opus': 5,
   'sonnet': 1,
-  'haiku': 0.2, // Haiku is the most token-efficient
+  'haiku': 0.2,
+  // OpenAI models
+  'o1': 4,
+  'o3': 3,
+  'gpt-4o': 1.5,
+  'gpt-4o-mini': 0.5,
   'unknown': 1,
 };
 
-const SIMPLE_TOOLS = new Set(['Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep']);
+// Universal tool names (after mapping via agent adapter)
+const SIMPLE_TOOLS = new Set(['read', 'edit', 'write', 'bash', 'search']);
+
+// Model tiers per agent
+const AGENT_MODEL_TIERS: Record<string, Record<string, string>> = {
+  'claude-code': {
+    'claude-opus-4-6': 'opus',
+    'claude-sonnet-4-6': 'sonnet',
+    'claude-haiku-4-6': 'haiku',
+  },
+  'cursor': {
+    'gpt-4o': 'sonnet',
+    'gpt-4o-mini': 'haiku',
+    'claude-opus-4-6': 'opus',
+    'claude-sonnet-4-6': 'sonnet',
+  },
+  'copilot': {
+    'gpt-4o': 'sonnet',
+    'o1': 'opus',
+    'o3-mini': 'haiku',
+  },
+  'codex': {
+    'o3': 'opus',
+    'o4-mini': 'haiku',
+    'codex-mini': 'haiku',
+  },
+};
 
 interface SessionComplexity {
   complexity: 'simple' | 'medium' | 'complex';
@@ -48,24 +82,27 @@ interface SessionComplexity {
   reason: string;
 }
 
-function analyzeComplexity(session: SessionData): SessionComplexity {
+function analyzeComplexity(session: SessionData, agentId: string): SessionComplexity {
   const toolCount = session.toolUses.length;
-  const toolNames = new Set(session.toolUses.map((t) => t.name));
 
-  // Check for Agent tool usage (always complex)
-  if (toolNames.has('Agent')) {
+  // Map tool names to universal concepts
+  const mappedTools = session.toolUses.map((t) => mapToolName(agentId, t.name));
+  const toolNames = new Set(mappedTools);
+
+  // Check for Agent/subagent tool usage (always complex)
+  if (toolNames.has('subagent')) {
     return {
       complexity: 'complex',
-      suggestedModel: 'claude-opus-4-6',
-      reason: 'Uses Agent tool',
+      suggestedModel: agentId === 'claude-code' ? 'claude-opus-4-6' : 'gpt-4o',
+      reason: 'Uses subagent tool',
     };
   }
 
-  // Complex: many total tool uses (check this before exploration to avoid misclassifying large sessions)
+  // Complex: many total tool uses
   if (toolCount > 15) {
     return {
       complexity: 'complex',
-      suggestedModel: 'claude-opus-4-6',
+      suggestedModel: agentId === 'claude-code' ? 'claude-opus-4-6' : 'gpt-4o',
       reason: 'Many operations',
     };
   }
@@ -76,47 +113,52 @@ function analyzeComplexity(session: SessionData): SessionComplexity {
     if (allSimple) {
       return {
         complexity: 'simple',
-        suggestedModel: 'claude-sonnet-4-6',
+        suggestedModel: agentId === 'claude-code' ? 'claude-sonnet-4-6' : 'gpt-4o-mini',
         reason: 'Few simple operations',
       };
     }
   }
 
   // Medium: moderate exploration
-  const readCount = session.toolUses.filter((t) => t.name === 'Read').length;
-  const globCount = session.toolUses.filter((t) => t.name === 'Glob').length;
-  if (readCount > 10 || globCount > 5) {
+  const readCount = mappedTools.filter((t) => t === 'read').length;
+  if (readCount > 10) {
     return {
       complexity: 'medium',
-      suggestedModel: 'claude-sonnet-4-6',
+      suggestedModel: agentId === 'claude-code' ? 'claude-sonnet-4-6' : 'gpt-4o',
       reason: 'Heavy exploration',
     };
   }
 
   return {
     complexity: 'medium',
-    suggestedModel: 'claude-sonnet-4-6',
+    suggestedModel: agentId === 'claude-code' ? 'claude-sonnet-4-6' : 'gpt-4o',
     reason: 'Standard complexity',
   };
 }
 
-function getModelTier(model: string): 'opus' | 'sonnet' | 'haiku' | 'unknown' {
+function getModelTier(model: string, agentId: string): 'opus' | 'sonnet' | 'haiku' | 'unknown' {
+  const agentTiers = AGENT_MODEL_TIERS[agentId];
+  if (!agentTiers) return 'unknown';
+
   const lower = model.toLowerCase();
-  if (lower.includes('opus')) return 'opus';
-  if (lower.includes('sonnet')) return 'sonnet';
-  if (lower.includes('haiku')) return 'haiku';
+  for (const [key, tier] of Object.entries(agentTiers)) {
+    if (lower.includes(key.toLowerCase())) {
+      return tier as 'opus' | 'sonnet' | 'haiku';
+    }
+  }
+
   return 'unknown';
 }
 
-function isOverkill(model: string, suggestedModel: string): boolean {
-  const modelTier = getModelTier(model);
-  const suggestedTier = getModelTier(suggestedModel);
+function isOverkill(model: string, suggestedModel: string, agentId: string): boolean {
+  const modelTier = getModelTier(model, agentId);
+  const suggestedTier = getModelTier(suggestedModel, agentId);
 
   const tierOrder = { haiku: 0, sonnet: 1, opus: 2, unknown: 3 };
   return tierOrder[modelTier] > tierOrder[suggestedTier];
 }
 
-export function detectModelSelection(sessions: SessionData[]): DetectorResult | null {
+export function detectModelSelection(sessions: SessionData[], _agentContext?: AgentContext): DetectorResult | null {
   if (sessions.length === 0) return null;
 
   const overkillSessions: Array<{
@@ -125,13 +167,15 @@ export function detectModelSelection(sessions: SessionData[]): DetectorResult | 
   }> = [];
 
   for (const session of sessions) {
+    const agentId = session.agent;
+
     // Skip sessions with unknown/synthetic models or no tool activity
-    if (getModelTier(session.model) === 'unknown') continue;
+    if (getModelTier(session.model, agentId) === 'unknown') continue;
     if (session.toolUses.length === 0 && session.totalInputTokens < 1000) continue;
 
-    const complexity = analyzeComplexity(session);
+    const complexity = analyzeComplexity(session, agentId);
 
-    if (isOverkill(session.model, complexity.suggestedModel)) {
+    if (isOverkill(session.model, complexity.suggestedModel, agentId)) {
       overkillSessions.push({ session, complexity });
     }
   }
@@ -145,8 +189,9 @@ export function detectModelSelection(sessions: SessionData[]): DetectorResult | 
   const examples: ModelSelectionEvidence['examples'] = [];
 
   for (const { session, complexity } of overkillSessions.slice(0, 10)) {
-    const currentTier = getModelTier(session.model);
-    const suggestedTier = getModelTier(complexity.suggestedModel);
+    const agentId = session.agent;
+    const currentTier = getModelTier(session.model, agentId);
+    const suggestedTier = getModelTier(complexity.suggestedModel, agentId);
     const currentMult = MODEL_MULTIPLIER[currentTier] ?? 1;
     const suggestedMult = MODEL_MULTIPLIER[suggestedTier] ?? 1;
 
@@ -183,7 +228,10 @@ export function detectModelSelection(sessions: SessionData[]): DetectorResult | 
   const severity: 'high' | 'medium' | 'low' =
     overkillRate > 30 ? 'high' : overkillRate > 15 ? 'medium' : 'low';
 
-  const confidence = Math.min(0.9, 0.5 + overkillSessions.length * 0.03);
+  let confidence = Math.min(0.9, 0.5 + overkillSessions.length * 0.03);
+
+  // Adjust confidence for estimated tokens
+  confidence = adjustConfidenceForEstimates(confidence, sessions);
 
   const evidence: ModelSelectionEvidence = {
     overkillSessions: overkillSessions.length,

@@ -7,7 +7,8 @@
  * - Peak usage times
  */
 
-import type { SessionData, DetectorResult, Remediation } from '../types.js';
+import type { SessionData, DetectorResult, Remediation, AgentContext } from '../types.js';
+import { adjustConfidenceForEstimates } from './agent-context.js';
 
 interface SessionTimingEvidence {
   totalSessions: number;
@@ -24,7 +25,7 @@ interface TimeWindow {
   tokens: number;
 }
 
-export function detectSessionTiming(sessions: SessionData[]): DetectorResult | null {
+export function detectSessionTiming(sessions: SessionData[], _agentContext?: AgentContext): DetectorResult | null {
   if (sessions.length === 0) return null;
 
   // Group sessions by hour
@@ -98,7 +99,10 @@ export function detectSessionTiming(sessions: SessionData[]): DetectorResult | n
   const severity: 'high' | 'medium' | 'low' =
     savingsPercent >= 5 ? 'medium' : 'low';
 
-  const confidence = 0.6; // Lower confidence for timing-based insights
+  let confidence = 0.6; // Lower confidence for timing-based insights
+
+  // Adjust confidence for estimated tokens
+  confidence = adjustConfidenceForEstimates(confidence, sessions);
 
   const evidence: SessionTimingEvidence = {
     totalSessions: sessions.length,

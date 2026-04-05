@@ -3,12 +3,14 @@
  *
  * Auto-detects all ~/.claude* directories and discovers session files.
  * Supports --claude-dir flag for explicit override.
+ * Supports multi-agent discovery via agent registry.
  */
 
 import { readdir, stat } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import { homedir } from 'node:os';
 import type { DiscoveryOptions } from './types.js';
+import { discoverAllFiles, discoverFilesByAgents } from './agents/registry.js';
 
 export interface DiscoveredFile {
   path: string;
@@ -19,6 +21,10 @@ export interface DiscoveredFile {
   size: number;
   /** Which Claude installation this file came from */
   sourceDir: string;
+  /** Which agent this file belongs to (for multi-agent support) */
+  agent?: string;
+  /** Agent-specific metadata (e.g., Cursor edit counts, model info) */
+  metadata?: Record<string, unknown>;
 }
 
 export function getDefaultClaudeDir(): string {
@@ -93,16 +99,38 @@ export async function detectConfigPaths(): Promise<string[]> {
 }
 
 export async function discoverFiles(options: DiscoveryOptions): Promise<DiscoveredFile[]> {
-  // Determine which directories to scan
+  // Check if agent filtering is requested
+  const agentIds = options.agentIds;
+
+  if (agentIds && agentIds.length > 0) {
+    // Use agent registry for multi-agent discovery
+    const agentFiles = await discoverFilesByAgents(agentIds, {
+      days: options.days,
+      project: options.project,
+    });
+
+    // Convert agent DiscoveredFile to legacy format
+    return agentFiles.map((f) => ({
+      path: f.path,
+      projectPath: f.projectPath,
+      projectName: f.projectName,
+      sessionId: f.sessionId,
+      modifiedAt: f.modifiedAt,
+      size: f.size,
+      sourceDir: f.agent, // Use agent as sourceDir for compatibility
+      agent: f.agent,
+      metadata: f.metadata,
+    }));
+  }
+
+  // Default: discover from all agents (Claude Code + Cursor, Copilot, Codex, etc.)
+  // Phase 1: Legacy Claude Code discovery (backward compatibility)
   let claudeDirs: string[];
   if (options.claudeDir) {
-    // Explicit override — use only specified dir(s)
     claudeDirs = [options.claudeDir];
   } else {
-    // Auto-detect all installations
     claudeDirs = await detectClaudeDirs();
     if (claudeDirs.length === 0) {
-      // Fallback to default
       claudeDirs = [getDefaultClaudeDir()];
     }
   }
@@ -144,7 +172,6 @@ export async function discoverFiles(options: DiscoveryOptions): Promise<Discover
         }
 
         // Scan nested session dirs for subagent files concurrently
-        // Structure: <project>/<session-uuid>/subagents/<agent-id>.jsonl
         try {
           const entries = await readdir(projectPath, { withFileTypes: true });
           const subdirNames = entries.filter(e => e.isDirectory()).map(e => e.name);
@@ -175,6 +202,36 @@ export async function discoverFiles(options: DiscoveryOptions): Promise<Discover
         throw error;
       }
     }
+  }
+
+  // Phase 2: Discover from other agent adapters (Cursor, Copilot, Codex)
+  try {
+    const agentFiles = await discoverAllFiles({
+      days: options.days,
+      project: options.project,
+    });
+
+    for (const f of agentFiles) {
+      // Skip claude-code — already handled above
+      if (f.agent === 'claude-code') continue;
+
+      if (!seenSessionIds.has(f.sessionId)) {
+        seenSessionIds.add(f.sessionId);
+        files.push({
+          path: f.path,
+          projectPath: f.projectPath,
+          projectName: f.projectName,
+          sessionId: f.sessionId,
+          modifiedAt: f.modifiedAt,
+          size: f.size,
+          sourceDir: f.agent,
+          agent: f.agent,
+          metadata: f.metadata,
+        });
+      }
+    }
+  } catch {
+    // Agent discovery failed — continue with Claude-only results
   }
 
   files.sort((a, b) => b.modifiedAt.getTime() - a.modifiedAt.getTime());
@@ -211,6 +268,7 @@ async function findJsonlFiles(
         modifiedAt: stats.mtime,
         size: stats.size,
         sourceDir,
+        agent: 'claude-code', // Default for backward compatibility
       });
     }
   } catch (error) {

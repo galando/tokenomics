@@ -121,6 +121,12 @@ export interface ToolResult {
 export interface SessionData {
   /** Unique session identifier */
   id: string;
+  /** Which agent this session came from (e.g., 'claude-code', 'cursor', 'copilot', 'codex') */
+  agent: string;
+  /** Agent version (if available) */
+  agentVersion?: string;
+  /** Whether token counts are actual or estimated */
+  rawTokenCounts?: boolean;
   /** Project name derived from cwd */
   project: string;
   /** Absolute path to project directory */
@@ -266,6 +272,15 @@ export interface AnalysisMetadata {
   totalTokens: TokenTotals;
   /** Analyzer version */
   version: string;
+  /** Agents included in this analysis (for multi-agent support) */
+  agentNames?: string[];
+  /** Per-agent summary statistics */
+  agentSummaries?: Array<{
+    agentId: string;
+    agentName: string;
+    sessionCount: number;
+    totalTokens: number;
+  }>;
 }
 
 // ============================================================================
@@ -347,11 +362,30 @@ export interface AnalysisOutput {
 // Detector Interface
 // ============================================================================
 
-export type DetectorFunction = (sessions: SessionData[]) => DetectorResult | null;
+/**
+ * Agent context passed to detectors
+ */
+export interface AgentContext {
+  /** Agent IDs to filter to (empty = all agents) */
+  agentIds: string[];
+  /** Whether token counts are estimated for any agent */
+  hasEstimatedTokens: boolean;
+  /** Adapter registry for accessing agent-specific data */
+  adapters: Map<string, import('./agents/types.js').AgentAdapter>;
+}
+
+export type DetectorFunction = (
+  sessions: SessionData[],
+  agentContext?: AgentContext
+) => DetectorResult | null | Promise<DetectorResult | null>;
 
 export interface Detector {
   name: string;
   detect: DetectorFunction;
+  /** Minimum confidence threshold (0-1) */
+  minConfidence?: number;
+  /** Agents this detector supports (empty = universal) */
+  supportedAgents?: string[];
 }
 
 // ============================================================================
@@ -365,6 +399,8 @@ export interface DiscoveryOptions {
   claudeDir?: string;
   /** Multiple explicit claude dirs (overrides auto-detect) */
   claudeDirs?: string[];
+  /** Filter discovery to specific agent IDs (e.g., ['claude-code', 'cursor']) */
+  agentIds?: string[];
 }
 
 // ============================================================================
@@ -400,6 +436,8 @@ export interface InjectionResult {
   changed: boolean;
   /** Generated instructions (for dry-run preview) */
   instructions: InstructionBlock[];
+  /** Optional message when injection was skipped or partial */
+  message?: string;
 }
 
 // ============================================================================
@@ -474,4 +512,10 @@ export interface CliOptions {
   setup: boolean;
   /** Suppress output (used by SessionStart hooks) */
   quiet: boolean;
+  /** Filter to specific agent (can be repeated) */
+  agent: string[];
+  /** Show all detected agents */
+  agents: boolean;
+  /** Show cross-agent comparison */
+  compare: boolean;
 }
