@@ -2,11 +2,16 @@
  * Cursor Agent Adapter
  *
  * Implements AgentAdapter for Cursor AI code editor.
- * Cursor stores conversation history in JSON format in ~/.cursor/ or workspace .cursor/ directories.
+ *
+ * Data sources (macOS):
+ * - ~/.cursor/ai-tracking/ai-code-tracking.db -- conversation IDs, file edits, models, timestamps
+ * - ~/Library/Application Support/Cursor/User/workspaceStorage/$DIR/state.vscdb -- conversation metadata
+ *
+ * Uses sqlite3 CLI (pre-installed on macOS) for zero-dep SQLite access.
  */
 
-import { readdir, stat, readFile } from 'node:fs/promises';
-import { join, basename } from 'node:path';
+import { stat } from 'node:fs/promises';
+import { join, basename, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import type {
   AgentAdapter,
@@ -14,116 +19,7 @@ import type {
   DiscoveryOptions,
   BestPractice,
 } from './types.js';
-import { estimateSessionTokens, getEstimationMetadata } from './token-estimation.js';
 import type { SessionData } from '../types.js';
-
-/**
- * Cursor conversation format (internal)
- */
-interface CursorMessage {
-  role: string;
-  content: string;
-  timestamp?: string;
-  toolName?: string;
-  toolInput?: Record<string, unknown>;
-}
-
-interface CursorConversation {
-  id: string;
-  createdAt: string;
-  updatedAt: string;
-  model: string;
-  messages: CursorMessage[];
-  metadata?: {
-    projectPath?: string;
-    totalTokens?: number;
-    totalCost?: number;
-  };
-}
-
-/**
- * Build SessionData from Cursor conversation
- */
-function buildSessionData(
-  conversation: CursorConversation,
-  file: DiscoveredFile
-): SessionData | null {
-  const messages: Array<{ role: string; content: string }> = [];
-  const toolUses: Array<{
-    id: string;
-    name: string;
-    input: Record<string, unknown>;
-    timestamp: string;
-  }> = [];
-  const toolResults: Array<{
-    tool_use_id: string;
-    content: string;
-    is_error: boolean;
-    timestamp: string;
-  }> = [];
-
-  let toolIdCounter = 0;
-
-  for (const msg of conversation.messages) {
-    if (msg.role === 'user' || msg.role === 'assistant') {
-      messages.push({
-        role: msg.role,
-        content: msg.content,
-      });
-    } else if (msg.role === 'tool' && msg.toolName) {
-      const toolId = `tool-${toolIdCounter++}`;
-      toolUses.push({
-        id: toolId,
-        name: msg.toolName,
-        input: msg.toolInput ?? {},
-        timestamp: msg.timestamp ?? conversation.createdAt,
-      });
-    } else if (msg.role === 'tool_result') {
-      const toolId = toolUses.length > 0 ? toolUses[toolUses.length - 1]!.id : 'unknown';
-      toolResults.push({
-        tool_use_id: toolId,
-        content: msg.content,
-        is_error: false,
-        timestamp: msg.timestamp ?? conversation.createdAt,
-      });
-    }
-  }
-
-  // Estimate tokens (Cursor doesn't report native token counts)
-  const estimates = estimateSessionTokens(messages, toolUses, toolResults);
-  const estimationMetadata = getEstimationMetadata(false);
-
-  // Extract project path from metadata
-  const projectPath = conversation.metadata?.projectPath ?? '';
-  const projectName = projectPath ? basename(projectPath) : 'unknown';
-
-  return {
-    id: conversation.id,
-    agent: 'cursor',
-    rawTokenCounts: estimationMetadata.isEstimated ? false : true,
-    project: projectName,
-    projectPath,
-    slug: conversation.id.slice(0, 8),
-    model: conversation.model,
-    messages: messages.map((m) => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content,
-      timestamp: conversation.createdAt,
-    })),
-    toolUses,
-    toolResults,
-    totalInputTokens: estimates.inputTokens,
-    totalOutputTokens: estimates.outputTokens,
-    totalCacheReadTokens: 0, // Cursor doesn't report cache
-    totalCacheCreationTokens: 0,
-    turnCount: messages.filter((m) => m.role === 'user').length,
-    compactUsed: false, // Cursor doesn't have /compact
-    compactCount: 0,
-    startedAt: conversation.createdAt,
-    endedAt: conversation.updatedAt,
-    sourceFile: file.path,
-  };
-}
 
 /**
  * Cursor adapter implementation
@@ -160,67 +56,161 @@ export const cursorAdapter: AgentAdapter = {
   },
 
   /**
-   * Discover Cursor conversation files
+   * Discover Cursor conversation files from AI tracking database
+   *
+   * Cursor stores conversation metadata in:
+   * - ~/.cursor/ai-tracking/ai-code-tracking.db (conversation IDs, files, timestamps)
+   * - ~/Library/Application Support/Cursor/User/workspaceStorage/$DIR/state.vscdb (composer metadata)
    */
   async discover(options: DiscoveryOptions): Promise<DiscoveredFile[]> {
     const home = homedir();
-    const cursorDir = join(home, '.cursor');
-    const cutoffDate = new Date(Date.now() - options.days * 24 * 60 * 60 * 1000);
+    const dbPath = join(home, '.cursor', 'ai-tracking', 'ai-code-tracking.db');
+    const cutoffMs = Date.now() - options.days * 24 * 60 * 60 * 1000;
     const files: DiscoveredFile[] = [];
 
     try {
-      // Check for conversations directory
-      const convDir = join(cursorDir, 'conversations');
-      const entries = await readdir(convDir, { withFileTypes: true });
-
-      for (const entry of entries) {
-        if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-
-        const filePath = join(convDir, entry.name);
-        const stats = await stat(filePath);
-
-        if (stats.mtime < cutoffDate) continue;
-
-        // Extract conversation ID from filename
-        const conversationId = basename(entry.name, '.json');
-
-        files.push({
-          path: filePath,
-          agent: 'cursor',
-          projectPath: '', // Will be extracted from conversation content
-          projectName: '', // Will be extracted from conversation content
-          sessionId: conversationId,
-          modifiedAt: stats.mtime,
-          size: stats.size,
-          metadata: {
-            source: 'cursor-conversations',
-          },
-        });
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        throw error;
-      }
+      const dbStat = await stat(dbPath);
+      if (!dbStat.isFile()) return [];
+    } catch {
+      return [];
     }
 
-    // Sort by modification date
+    // Query conversation summaries from SQLite via sqlite3 CLI
+    // Group edits by conversationId to reconstruct sessions
+    const query = `SELECT conversationId, COUNT(*) as editCount, MIN(timestamp) as firstEdit, MAX(timestamp) as lastEdit, GROUP_CONCAT(DISTINCT model) as models, GROUP_CONCAT(DISTINCT fileName) as fileNames FROM ai_code_hashes GROUP BY conversationId HAVING lastEdit > ${cutoffMs} ORDER BY lastEdit DESC;`;
+
+    let rows: string;
+    try {
+      const { execSync } = await import('node:child_process');
+      rows = execSync(`sqlite3 "${dbPath}" "${query}" -separator "|"`, {
+        encoding: 'utf-8',
+        timeout: 5000,
+      }).trim();
+    } catch {
+      return [];
+    }
+
+    if (!rows) return [];
+
+    for (const row of rows.split('\n')) {
+      const parts = row.split('|');
+      if (parts.length < 5) continue;
+
+      const conversationId = parts[0]!;
+      const editCount = parseInt(parts[1]!, 10);
+      const firstEdit = parseInt(parts[2]!, 10);
+      const lastEdit = parseInt(parts[3]!, 10);
+      const models = parts[4] ?? 'default';
+
+      files.push({
+        path: dbPath, // Reference the DB itself -- parse() will query it
+        agent: 'cursor',
+        projectPath: '',
+        projectName: '',
+        sessionId: conversationId,
+        modifiedAt: new Date(lastEdit),
+        size: 0,
+        metadata: {
+          source: 'cursor-ai-tracking',
+          editCount,
+          firstEdit,
+          lastEdit,
+          models,
+          fileNames: parts[5] ?? '',
+        },
+      });
+    }
+
+    // Sort by modification date (newest first)
     files.sort((a, b) => b.modifiedAt.getTime() - a.modifiedAt.getTime());
 
     return files;
   },
 
   /**
-   * Parse a Cursor conversation file
+   * Parse a Cursor conversation from ai-tracking database
+   *
+   * Queries the SQLite database for all edits belonging to this conversation,
+   * then builds SessionData with estimated tokens.
    */
   async parse(file: DiscoveredFile): Promise<SessionData | null> {
-    try {
-      const content = await readFile(file.path, 'utf-8');
-      const conversation = JSON.parse(content) as CursorConversation;
+    const meta = file.metadata as Record<string, unknown> | undefined;
+    if (!meta) return null;
 
-      return buildSessionData(conversation, file);
-    } catch {
-      return null;
+    const conversationId = file.sessionId;
+    const editCount = (meta.editCount as number) ?? 0;
+    const firstEdit = (meta.firstEdit as number) ?? 0;
+    const lastEdit = (meta.lastEdit as number) ?? 0;
+    const models = (meta.models as string) ?? 'default';
+    const fileNames = (meta.fileNames as string) ?? '';
+
+    if (editCount === 0) return null;
+
+    // Extract the primary model (first one listed)
+    const modelList = models.split(',').map((m) => m.trim()).filter(Boolean);
+    const primaryModel = modelList[0] ?? 'default';
+
+    // Build messages from edit data (we know edits, timestamps)
+    const filesEdited = fileNames.split(',').filter(Boolean);
+    const turnCount = Math.max(1, Math.ceil(editCount / 3)); // Rough estimate: 3 edits per turn
+
+    const startedAt = new Date(firstEdit).toISOString();
+    const endedAt = new Date(lastEdit).toISOString();
+
+    // Estimate tokens based on edit count (each edit ~200-500 tokens average)
+    const estimatedInputTokens = Math.round(turnCount * 350);
+    const estimatedOutputTokens = Math.round(editCount * 200);
+
+    // Build tool uses from file edits
+    const toolUses: Array<{
+      id: string;
+      name: string;
+      input: Record<string, unknown>;
+      timestamp: string;
+    }> = filesEdited.slice(0, 50).map((f, i) => ({
+      id: `tool-${i}`,
+      name: 'file_edit',
+      input: { fileName: f },
+      timestamp: startedAt,
+    }));
+
+    // Build user/assistant messages from turns
+    const messages: Array<{ role: 'user' | 'assistant'; content: string; timestamp: string }> = [];
+    for (let i = 0; i < turnCount; i++) {
+      messages.push({
+        role: 'user',
+        content: `Edit ${i + 1}: ${filesEdited[i % filesEdited.length] ?? 'code changes'}`,
+        timestamp: startedAt,
+      });
+      messages.push({
+        role: 'assistant',
+        content: `Applied ${Math.min(3, editCount - i * 3)} edits`,
+        timestamp: startedAt,
+      });
     }
+
+    return {
+      id: conversationId,
+      agent: 'cursor',
+      rawTokenCounts: false, // All tokens are estimated
+      project: filesEdited[0] ? basename(dirname(filesEdited[0])) : 'unknown',
+      projectPath: filesEdited[0] ? dirname(filesEdited[0]) : '',
+      slug: conversationId.slice(0, 8),
+      model: primaryModel,
+      messages,
+      toolUses,
+      toolResults: [],
+      totalInputTokens: estimatedInputTokens,
+      totalOutputTokens: estimatedOutputTokens,
+      totalCacheReadTokens: 0,
+      totalCacheCreationTokens: 0,
+      turnCount,
+      compactUsed: false,
+      compactCount: 0,
+      startedAt,
+      endedAt,
+      sourceFile: file.path,
+    };
   },
 
   /**

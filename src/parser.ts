@@ -19,6 +19,8 @@ import type {
   ContextTurn,
 } from './types.js';
 import type { DiscoveredFile } from './discovery.js';
+import type { DiscoveredFile as AgentDiscoveredFile } from './agents/types.js';
+import { getAdapter, initializeDefaultAdapters } from './agents/registry.js';
 
 /**
  * Parse a single JSONL file and return a SessionData object
@@ -208,7 +210,7 @@ function buildSessionData(records: JsonlRecord[], file: DiscoveredFile): Session
 
   return {
     id: sessionId,
-    agent: 'claude-code', // Will be overridden by adapter
+    agent: file.agent ?? 'claude-code',
     rawTokenCounts: true, // Claude Code reports actual token counts
     project: extractProjectName(cwd),
     projectPath: cwd,
@@ -295,12 +297,47 @@ export function getContextTurns(session: SessionData): ContextTurn[] {
 
 /**
  * Parse multiple session files
+ *
+ * Dispatches to agent adapter parsers for non-Claude sessions,
+ * uses JSONL parser for Claude Code sessions.
  */
 export async function parseSessionFiles(files: DiscoveredFile[]): Promise<SessionData[]> {
+  // Ensure adapters are registered
+  initializeDefaultAdapters();
+
   const sessions: SessionData[] = [];
 
   for (const file of files) {
-    const session = await parseSessionFile(file);
+    const agentId = file.agent ?? 'claude-code';
+    let session: SessionData | null = null;
+
+    if (agentId !== 'claude-code') {
+      // Use agent adapter's parser for non-Claude sessions
+      const adapter = getAdapter(agentId);
+      if (adapter) {
+        try {
+          const agentFile: AgentDiscoveredFile = {
+            path: file.path,
+            agent: file.agent ?? agentId,
+            projectPath: file.projectPath,
+            projectName: file.projectName,
+            sessionId: file.sessionId,
+            modifiedAt: file.modifiedAt,
+            size: file.size,
+            metadata: file.metadata,
+          };
+          session = await adapter.parse(agentFile);
+        } catch {
+          // Adapter parse failed — fall through to JSONL parser
+        }
+      }
+    }
+
+    // Fallback: use JSONL parser (works for Claude Code, and is a no-op for others)
+    if (!session) {
+      session = await parseSessionFile(file);
+    }
+
     if (session) {
       sessions.push(session);
     }
