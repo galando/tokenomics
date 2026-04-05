@@ -28,7 +28,7 @@ import { injectFindings } from './injector.js';
 import { installHooks } from './hooks.js';
 import { optimizeSettings, applySettings } from './optimizer.js';
 
-const VERSION = '1.3.0';
+const VERSION = '1.3.2';
 
 // ─── CLI ──────────────────────────────────────────────────────────────────────
 
@@ -462,17 +462,6 @@ function renderMarkdownReport(output: AnalysisOutput): string {
   return lines.join('\n');
 }
 
-// ─── Stubs for interactive fix (not yet implemented) ──────────────────────────
-
-function isInteractive(): boolean {
-  return process.stdout.isTTY === true;
-}
-
-async function renderInteractiveFix(_output: FixOutput, _data: { metadata: AnalysisOutput['metadata']; findings: DetectorResult[] }): Promise<void> {
-  // Fallback to non-interactive rendering
-  throw new Error('Interactive fix not implemented');
-}
-
 // ─── Main ──────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -598,9 +587,6 @@ async function main(): Promise<void> {
       // Strip finding data before JSON output (it's redundant)
       const { manual, ...jsonOutput } = fixOutput;
       console.log(JSON.stringify({ ...jsonOutput, manual: manual.map(({ finding, ...rest }) => rest) }, null, 2));
-    } else if (isInteractive()) {
-      fixOutput.manual = buildManualActions(findings, true);
-      await renderInteractiveFix(fixOutput, { metadata, findings });
     } else {
       renderFixOutput(fixOutput);
     }
