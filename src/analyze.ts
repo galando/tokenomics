@@ -28,7 +28,7 @@ import { injectFindings } from './injector.js';
 import { installHooks } from './hooks.js';
 import { optimizeSettings, applySettings } from './optimizer.js';
 
-const VERSION = '1.3.0';
+const VERSION = '1.3.2';
 
 // ─── CLI ──────────────────────────────────────────────────────────────────────
 

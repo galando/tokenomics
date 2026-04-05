@@ -176,9 +176,9 @@ describe('Publish workflow (.github/workflows/publish.yml)', () => {
 
 describe('Version consistency check logic', () => {
   it('extracts version from v-prefixed tag', () => {
-    const tag = 'v1.4.0';
+    const tag = 'v1.3.2';
     const extracted = tag.replace(/^v/, '');
-    expect(extracted).toBe('1.4.0');
+    expect(extracted).toBe('1.3.2');
   });
 
   it('matches package.json version correctly', () => {

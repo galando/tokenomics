@@ -2,7 +2,7 @@
 
 A CLI tool that analyzes your Claude Code session history to identify token waste patterns and provide actionable fixes. Runs locally, no LLM needed.
 
-**v1.3.0** introduces **native Claude Code integration** — tokenomics injects behavioral insights directly into your CLAUDE.md files and auto-updates via SessionStart hooks.
+**v1.3.2** introduces **native Claude Code integration** — tokenomics injects behavioral insights directly into your CLAUDE.md files and auto-updates via SessionStart hooks.
 
 ## Install
 
