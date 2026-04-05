@@ -102,7 +102,34 @@ export async function runAsyncDetectors(
 }
 
 export function registerDetector(detector: Detector): void {
+  // Check sync array for dedup
+  const syncIdx = detectors.findIndex((d) => d.name === detector.name);
+  if (syncIdx >= 0) {
+    detectors[syncIdx] = detector;
+    return;
+  }
+  // Check async array too — avoid duplicate across both registries
+  const asyncIdx = asyncDetectors.findIndex((d) => d.name === detector.name);
+  if (asyncIdx >= 0) {
+    // Async detectors have a narrower type; replace only if type-compatible
+    console.warn(`Detector "${detector.name}" already registered as async. Use registerAsyncDetector instead.`);
+    return;
+  }
   detectors.push(detector);
+}
+
+export function registerAsyncDetector(detector: Detector): void {
+  const asyncIdx = asyncDetectors.findIndex((d) => d.name === detector.name);
+  if (asyncIdx >= 0) {
+    asyncDetectors[asyncIdx] = detector as typeof asyncDetectors[number];
+    return;
+  }
+  const syncIdx = detectors.findIndex((d) => d.name === detector.name);
+  if (syncIdx >= 0) {
+    console.warn(`Detector "${detector.name}" already registered as sync. Remove sync version first.`);
+    return;
+  }
+  asyncDetectors.push(detector as typeof asyncDetectors[number]);
 }
 
 export function getDetectorNames(): string[] {

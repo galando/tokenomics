@@ -16,13 +16,13 @@ const CONFIDENCE_THRESHOLD = 0.3;
  * Map each detector result to one or more instruction blocks.
  * Pure function — deterministic given the same input.
  */
-export function findingsToInstructions(findings: DetectorResult[]): InstructionBlock[] {
+export function findingsToInstructions(findings: DetectorResult[], agentId?: string): InstructionBlock[] {
   const instructions: InstructionBlock[] = [];
 
   for (const finding of findings) {
     if (finding.confidence < CONFIDENCE_THRESHOLD) continue;
 
-    const block = detectorToInstruction(finding);
+    const block = detectorToInstruction(finding, agentId);
     if (block) {
       instructions.push(block);
     }
@@ -205,7 +205,7 @@ export async function injectFindings(
   projectDir?: string,
   agentId?: string,
 ): Promise<InjectionResult> {
-  const instructions = findingsToInstructions(findings);
+  const instructions = findingsToInstructions(findings, agentId);
 
   if (instructions.length === 0 && findings.length === 0) {
     return {
@@ -232,6 +232,17 @@ export async function injectFindings(
   // Fall back to CLAUDE.md discovery for Claude Code or if no agent specified
   if (configPaths.length === 0 && (!agentId || agentId === 'claude-code')) {
     configPaths = findClaudeMdFiles(projectDir).map((t) => t.filePath);
+  }
+
+  // Non-Claude agents with no config paths — report gracefully
+  if (configPaths.length === 0 && agentId && agentId !== 'claude-code') {
+    return {
+      targets: [],
+      instructionCount: instructions.length,
+      changed: false,
+      instructions,
+      message: `No writable config paths found for agent "${agentId}". Injection skipped.`,
+    };
   }
 
   const targets: Array<{ filePath: string; existed: boolean; scope: 'global' | 'project' }> = [];

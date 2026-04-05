@@ -5,6 +5,11 @@
 import { describe, it, expect } from 'vitest';
 import { cursorAdapter } from '../../src/agents/cursor.js';
 import type { SessionData } from '../../src/types.js';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const fixturePath = (name: string) => join(__dirname, '..', 'fixtures', 'cursor', name);
 
 describe('Cursor Adapter', () => {
   describe('adapter metadata', () => {
@@ -47,10 +52,10 @@ describe('Cursor Adapter', () => {
 
   describe('parse()', () => {
     it('should parse Cursor fixture correctly', async () => {
-      const fixturePath = '/Users/galando/dev/tokenomics/tests/fixtures/cursor/conversation-001.json';
+      const fp = fixturePath('conversation-001.json');
 
       const session = await cursorAdapter.parse({
-        path: fixturePath,
+        path: fp,
         agent: 'cursor',
         projectPath: '',
         projectName: '',
@@ -66,10 +71,10 @@ describe('Cursor Adapter', () => {
     });
 
     it('should extract messages from conversation', async () => {
-      const fixturePath = '/Users/galando/dev/tokenomics/tests/fixtures/cursor/conversation-001.json';
+      const fp = fixturePath('conversation-001.json');
 
       const session = await cursorAdapter.parse({
-        path: fixturePath,
+        path: fp,
         agent: 'cursor',
         projectPath: '',
         projectName: '',
@@ -83,10 +88,10 @@ describe('Cursor Adapter', () => {
     });
 
     it('should extract tool uses', async () => {
-      const fixturePath = '/Users/galando/dev/tokenomics/tests/fixtures/cursor/conversation-001.json';
+      const fp = fixturePath('conversation-001.json');
 
       const session = await cursorAdapter.parse({
-        path: fixturePath,
+        path: fp,
         agent: 'cursor',
         projectPath: '',
         projectName: '',
@@ -100,10 +105,10 @@ describe('Cursor Adapter', () => {
     });
 
     it('should estimate tokens', async () => {
-      const fixturePath = '/Users/galando/dev/tokenomics/tests/fixtures/cursor/conversation-001.json';
+      const fp = fixturePath('conversation-001.json');
 
       const session = await cursorAdapter.parse({
-        path: fixturePath,
+        path: fp,
         agent: 'cursor',
         projectPath: '',
         projectName: '',

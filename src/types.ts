@@ -436,6 +436,8 @@ export interface InjectionResult {
   changed: boolean;
   /** Generated instructions (for dry-run preview) */
   instructions: InstructionBlock[];
+  /** Optional message when injection was skipped or partial */
+  message?: string;
 }
 
 // ============================================================================

@@ -245,6 +245,51 @@ function renderHeader(metadata: AnalysisOutput['metadata']): string {
 </header>`;
 }
 
+// ============================================================================
+// Agent Breakdown (multi-agent support)
+// ============================================================================
+
+const AGENT_COLORS: Record<string, string> = {
+  'claude-code': '#7c3aed',
+  'cursor': '#3b82f6',
+  'copilot': '#10b981',
+  'codex': '#f59e0b',
+};
+
+const AGENT_LABELS: Record<string, string> = {
+  'claude-code': 'Claude Code',
+  'cursor': 'Cursor',
+  'copilot': 'Copilot',
+  'codex': 'Codex',
+};
+
+function renderAgentBreakdownCard(
+  agentSummaries: Array<{ agentId: string; agentName: string; sessionCount: number; totalTokens: number }>,
+  grandTotal: number,
+): string {
+  const bars = agentSummaries.map((a) => {
+    const pct = grandTotal > 0 ? ((a.totalTokens / grandTotal) * 100).toFixed(1) : '0';
+    const color = AGENT_COLORS[a.agentId] ?? '#6b7280';
+    const label = AGENT_LABELS[a.agentId] ?? a.agentName;
+    return `<div class="agent-row">
+      <span class="agent-label">${escapeHtml(label)}</span>
+      <div class="agent-bar-track"><div class="agent-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+      <span class="agent-pct">${pct}%</span>
+      <span class="agent-sessions">${a.sessionCount} sessions</span>
+    </div>`;
+  }).join('\n');
+
+  return `<div class="bento-card bento-agents">
+    <div class="panel-header">
+      <span class="panel-tag">03</span>
+      <h3 class="panel-title">AGENT BREAKDOWN</h3>
+    </div>
+    <div class="panel-body">
+      ${bars}
+    </div>
+  </div>`;
+}
+
 function renderDashboard(metadata: AnalysisOutput['metadata'], findings: DetectorResult[]): string {
   const { score, grade, color } = calculateHealthScore(findings);
   const totalTokens = metadata.totalTokens;
@@ -320,6 +365,9 @@ function renderDashboard(metadata: AnalysisOutput['metadata'], findings: Detecto
         </div>
       </div>
     </div>
+
+    ${metadata.agentSummaries && metadata.agentSummaries.length > 1 ? renderAgentBreakdownCard(metadata.agentSummaries, totalTokens.total) : ''}
+
 
   </div>
 </section>
@@ -739,6 +787,7 @@ body::before {
 .bento-issues   { grid-column: span 2; }
 .bento-donut    { grid-column: span 3; }
 .bento-savings  { grid-column: span 3; }
+.bento-agents   { grid-column: span 6; }
 
 /* Keep donut and savings panels equal height */
 .bento-grid .bento-donut,
@@ -793,6 +842,15 @@ body::before {
 .bento-issues   { animation-delay: 240ms; }
 .bento-donut    { animation-delay: 300ms; }
 .bento-savings  { animation-delay: 360ms; }
+.bento-agents   { animation-delay: 420ms; }
+
+/* ── Agent Breakdown ── */
+.agent-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.agent-label { width: 110px; font-size: 0.78rem; color: var(--text-muted); flex-shrink: 0; }
+.agent-bar-track { flex: 1; height: 22px; background: var(--grid-line); border-radius: 4px; overflow: hidden; }
+.agent-bar-fill { height: 100%; border-radius: 4px; transition: width 1s cubic-bezier(.22,1,.36,1); }
+.agent-pct { width: 48px; text-align: right; font-size: 0.78rem; font-weight: 600; color: var(--text-primary); }
+.agent-sessions { width: 90px; text-align: right; font-size: 0.72rem; color: var(--text-muted); }
 
 /* ── Header ── */
 .cmd-header { margin-bottom: 32px; }

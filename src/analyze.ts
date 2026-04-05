@@ -30,7 +30,7 @@ import { optimizeSettings, applySettings } from './optimizer.js';
 import { getAgentName } from './agents/registry.js';
 import { initializeDefaultAdapters } from './agents/registry.js';
 
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 
 // ─── CLI ──────────────────────────────────────────────────────────────────────
 
@@ -511,6 +511,90 @@ function renderMarkdownReport(output: AnalysisOutput): string {
   return lines.join('\n');
 }
 
+// ─── Cross-Agent Comparison ──────────────────────────────────────────────────
+
+function renderAgentComparison(sessions: SessionData[], findings: DetectorResult[]): void {
+  const bold = '\x1b[1m';
+  const reset = '\x1b[0m';
+  const dim = '\x1b[2m';
+  const cyan = '\x1b[36m';
+  const green = '\x1b[32m';
+  const yellow = '\x1b[33m';
+
+  const agentGroups = new Map<string, SessionData[]>();
+  for (const s of sessions) {
+    const existing = agentGroups.get(s.agent) ?? [];
+    existing.push(s);
+    agentGroups.set(s.agent, existing);
+  }
+
+  if (agentGroups.size < 2) {
+    console.log('');
+    console.log('  Cross-agent comparison requires sessions from at least 2 agents.');
+    console.log(`  Found: ${agentGroups.size} agent(s). Use --agent to add more.`);
+    console.log('');
+    return;
+  }
+
+  console.log('');
+  console.log(`${bold}${cyan}  CROSS-AGENT COMPARISON${reset}`);
+  console.log(`${dim}  ${'─'.repeat(72)}${reset}`);
+  console.log('');
+
+  // Per-agent metrics table
+  console.log('  ┌──────────────────┬──────────┬──────────────┬──────────────┬────────────┐');
+  console.log('  │ Agent            │ Sessions │ Total Tokens │ Avg/session  │ Findings   │');
+  console.log('  ├──────────────────┼──────────┼──────────────┼──────────────┼────────────┤');
+
+  for (const [agentId, agentSessions] of agentGroups) {
+    const name = getAgentName(agentId) ?? agentId;
+    const totalTokens = agentSessions.reduce(
+      (sum, s) => sum + s.totalInputTokens + s.totalOutputTokens + s.totalCacheReadTokens + s.totalCacheCreationTokens, 0,
+    );
+    const avgTokens = agentSessions.length > 0 ? Math.round(totalTokens / agentSessions.length) : 0;
+    const agentFindings = findings.filter((f) => {
+      const evidence = f.evidence as Record<string, unknown> | undefined;
+      const examples = Array.isArray(evidence?.examples) ? evidence!.examples as Array<{ agent?: string }> : [];
+      return examples.some((ex) => ex.agent === agentId) || (agentSessions.length > 0 && examples.length === 0);
+    }).length;
+
+    const label = name.length > 16 ? name.slice(0, 15) + '…' : name.padEnd(16);
+    console.log(`  │ ${label} │ ${String(agentSessions.length).padStart(8)} │ ${fmt(totalTokens).padStart(12)} │ ${fmt(avgTokens).padStart(12)} │ ${String(agentFindings).padStart(10)} │`);
+  }
+
+  console.log('  └──────────────────┴──────────┴──────────────┴──────────────┴────────────┘');
+
+  // Top findings per agent
+  const agentFindingMap = new Map<string, DetectorResult[]>();
+  for (const [agentId, agentSessions] of agentGroups) {
+    const relevant = findings.slice(0, 5).map((f) => f.title);
+    if (relevant.length > 0 || agentSessions.length > 0) {
+      agentFindingMap.set(agentId, findings.slice(0, 3));
+    }
+  }
+
+  if (agentFindingMap.size > 0) {
+    console.log('');
+    console.log(`${bold}  Top findings by agent:${reset}`);
+    for (const [agentId, agentFindings] of agentFindingMap) {
+      const name = getAgentName(agentId) ?? agentId;
+      const color = agentId === 'claude-code' ? green : yellow;
+      console.log(`  ${color}${name}:${reset}`);
+      if (agentFindings.length === 0) {
+        console.log('    No issues detected.');
+      } else {
+        for (const f of agentFindings.slice(0, 3)) {
+          console.log(`    ${severityIcon(f.severity)} ${f.title} (~${f.savingsPercent}% savings)`);
+        }
+      }
+    }
+  }
+
+  console.log('');
+  console.log(`  Run ${bold}tokenomics --html${reset} for the full interactive dashboard`);
+  console.log('');
+}
+
 // ─── Stubs for interactive fix (not yet implemented) ──────────────────────────
 
 function isInteractive(): boolean {
@@ -568,6 +652,7 @@ async function main(): Promise<void> {
   };
 
   // Add agent filter if specified
+  // CLI uses --agent (repeatable) → maps to DiscoveryOptions.agentIds
   if (options.agent.length > 0) {
     discoveryOpts.agentIds = options.agent;
   }
@@ -605,11 +690,17 @@ async function main(): Promise<void> {
     console.error(`Found ${findings.length} patterns`);
   }
 
+  // ── Compare mode ──
+  if (options.compare) {
+    renderAgentComparison(sessions, findings);
+    return;
+  }
+
   // ── Setup mode ──
   if (options.setup) {
     const projectDir = process.cwd();
     const hookResult = await installHooks();
-    const injectResult = await injectFindings(findings, projectDir);
+    const injectResult = await injectFindings(findings, projectDir, options.agent[0]);
 
     if (!options.quiet) {
       console.log('');
@@ -633,7 +724,7 @@ async function main(): Promise<void> {
   // ── Inject mode ──
   if (options.inject) {
     const projectDir = process.cwd();
-    const result = await injectFindings(findings, projectDir);
+    const result = await injectFindings(findings, projectDir, options.agent[0]);
 
     if (!options.quiet) {
       if (result.changed) {
@@ -690,7 +781,7 @@ async function main(): Promise<void> {
 
     // Also run injection after fixes
     if (!options.dryRun) {
-      const injectResult = await injectFindings(findings, process.cwd());
+      const injectResult = await injectFindings(findings, process.cwd(), options.agent[0]);
       if (!options.quiet && injectResult.changed) {
         console.log(`\n  Injected ${injectResult.instructionCount} insights into CLAUDE.md`);
       }

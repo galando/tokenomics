@@ -102,17 +102,18 @@ export async function discoverFilesByAgents(
   agentIds: string[],
   options: DiscoveryOptions
 ): Promise<DiscoveredFile[]> {
+  const results = await Promise.allSettled(
+    agentIds.map(async (id) => {
+      const adapter = adapters.get(id);
+      if (!adapter) return [];
+      return adapter.discover(options);
+    })
+  );
+
   const allFiles: DiscoveredFile[] = [];
-
-  for (const id of agentIds) {
-    const adapter = adapters.get(id);
-    if (!adapter) continue;
-
-    try {
-      const files = await adapter.discover(options);
-      allFiles.push(...files);
-    } catch {
-      // Silently ignore discovery failures
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      allFiles.push(...result.value);
     }
   }
 
@@ -123,19 +124,28 @@ export async function discoverFilesByAgents(
 }
 
 /**
- * Initialize default adapters
+ * Initialize default adapters.
+ * Returns the number of adapters successfully registered.
+ * Logs warnings for any that fail.
  */
-export function initializeDefaultAdapters(): void {
-  if (adapters.size === 0) {
+export function initializeDefaultAdapters(): number {
+  if (adapters.size > 0) return adapters.size;
+
+  const defaultAdapters = [claudeCodeAdapter, cursorAdapter, copilotAdapter, codexAdapter];
+  let registered = 0;
+
+  for (const adapter of defaultAdapters) {
     try {
-      if (claudeCodeAdapter?.id) registerAdapter(claudeCodeAdapter);
-      if (cursorAdapter?.id) registerAdapter(cursorAdapter);
-      if (copilotAdapter?.id) registerAdapter(copilotAdapter);
-      if (codexAdapter?.id) registerAdapter(codexAdapter);
+      if (adapter?.id) {
+        registerAdapter(adapter);
+        registered++;
+      }
     } catch (error) {
-      console.warn('Failed to initialize default adapters:', error);
+      console.warn(`Failed to initialize adapter ${adapter?.id ?? 'unknown'}:`, error);
     }
   }
+
+  return registered;
 }
 
 // Don't auto-initialize on import to avoid test issues
