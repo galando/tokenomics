@@ -480,6 +480,8 @@ export interface CliOptions {
   budget: boolean;
   /** Run lightweight budget check (for hooks) */
   budgetCheck: boolean;
+  /** Suppress budget alerts (no CLAUDE.md injection) */
+  noAlerts: boolean;
 }
 
 // ============================================================================
@@ -544,6 +546,8 @@ export interface BudgetConfig {
   alertThresholds: number[];
   /** Action when ceiling is reached: 'downgrade' | 'pause' | 'warn' */
   ceilingAction: 'downgrade' | 'pause' | 'warn';
+  /** When true, suppress all budget alerts (no CLAUDE.md injection) */
+  muteAlerts?: boolean;
 }
 
 export interface BudgetState {
@@ -579,6 +583,28 @@ export interface BudgetCheckResult {
   ceilingExceeded: boolean;
   /** Which scope exceeded ceiling (if any) */
   exceededScope?: BudgetScope;
+  /** Scopes where data came from cache (not fresh aggregation) */
+  cachedScopes?: Set<BudgetScope>;
+}
+
+/** Cached budget totals for daily/project scopes */
+export interface BudgetCache {
+  daily: {
+    tokens: number;
+    updatedAt: string;
+  };
+  project: {
+    tokens: number;
+    updatedAt: string;
+  };
+}
+
+/** Options for checkBudget */
+export interface CheckBudgetOptions {
+  config?: BudgetConfig;
+  claudeDir?: string;
+  /** When true, compute real daily/project totals instead of using cache */
+  forceRefresh?: boolean;
 }
 
 // ============================================================================

@@ -23,6 +23,7 @@ export const DEFAULT_BUDGET: BudgetConfig = {
   projectCeiling: 10_000_000,
   alertThresholds: [50, 80, 90],
   ceilingAction: 'warn',
+  muteAlerts: false,
 };
 
 /**
@@ -42,6 +43,7 @@ export async function readBudgetConfig(customPath?: string): Promise<BudgetConfi
       projectCeiling: content.projectCeiling ?? DEFAULT_BUDGET.projectCeiling,
       alertThresholds: content.alertThresholds ?? DEFAULT_BUDGET.alertThresholds,
       ceilingAction: content.ceilingAction ?? DEFAULT_BUDGET.ceilingAction,
+      muteAlerts: content.muteAlerts ?? DEFAULT_BUDGET.muteAlerts,
     };
   } catch {
     // File doesn't exist or is invalid JSON - return defaults

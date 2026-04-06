@@ -31,7 +31,7 @@ import { extractSignals, routePrompt } from './router.js';
 import { checkBudget, renderBudgetDashboard, renderBudgetCheckOutput } from './budget.js';
 import { auditPrompt } from './auditor.js';
 import { renderPromptOutput } from './prompt-output.js';
-import { ensureBudgetConfig } from './budget-config.js';
+import { ensureBudgetConfig, readBudgetConfig } from './budget-config.js';
 
 const VERSION = '2.0.0';
 
@@ -58,6 +58,7 @@ function parseCliArgs(): CliOptions {
       prompt: { type: 'string' },
       budget: { type: 'boolean', default: false },
       'budget-check': { type: 'boolean', default: false },
+      'no-alerts': { type: 'boolean', default: false },
     },
     strict: true,
   });
@@ -85,6 +86,7 @@ function parseCliArgs(): CliOptions {
     prompt: values.prompt,
     budget: values.budget,
     budgetCheck: values['budget-check'],
+    noAlerts: values['no-alerts'],
   };
 }
 
@@ -126,6 +128,7 @@ PROMPT ANALYSIS
   --prompt <text>      Analyze a prompt: model recommendation + quality grade
   --budget             Show token budget dashboard
   --budget-check       Lightweight budget check (for hooks)
+  --no-alerts          Suppress budget alerts (no CLAUDE.md injection)
 
 OTHER
   --verbose            Show discovery progress and debug info
@@ -491,6 +494,13 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  // --no-alerts only makes sense with --budget or --budget-check
+  if (options.noAlerts && !options.budget && !options.budgetCheck) {
+    console.error('Note: --no-alerts only works with --budget or --budget-check.');
+    console.error('Example: tokenomics --budget --no-alerts');
+    process.exit(1);
+  }
+
   // ── Prompt analysis mode ──
   if (options.prompt) {
     const signals = extractSignals(options.prompt);
@@ -500,20 +510,22 @@ async function main(): Promise<void> {
     return;
   }
 
-  // ── Budget mode ──
+  // ── Budget mode (full dashboard with refresh) ──
   if (options.budget) {
     const config = await ensureBudgetConfig();
-    const result = await checkBudget(config.config);
-    console.log(renderBudgetDashboard(result.states, config.config));
+    const budgetConfig = { ...config.config, ...(options.noAlerts && { muteAlerts: true }) };
+    const result = await checkBudget({ config: budgetConfig, forceRefresh: true });
+    console.log(renderBudgetDashboard(result.states, budgetConfig, result.cachedScopes));
     return;
   }
 
-  // ── Budget check mode (for hooks) ──
+  // ── Budget check mode (for hooks, uses cache) ──
   if (options.budgetCheck) {
-    const result = await checkBudget();
+    const config = await readBudgetConfig();
+    const budgetConfig = { ...config, ...(options.noAlerts && { muteAlerts: true }) };
+    const result = await checkBudget({ config: budgetConfig, forceRefresh: false });
     console.log(renderBudgetCheckOutput(result));
     process.exit(result.ceilingExceeded ? 1 : 0);
-    return;
   }
 
   // Discover JSONL files (auto-detects all ~/.claude* installations)

@@ -6,15 +6,16 @@
  */
 
 import { open, readdir, stat, readFile, writeFile, mkdir } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { createInterface } from 'node:readline';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import type { BudgetConfig, BudgetState, BudgetScope, AlertEvent, BudgetCheckResult } from './types.js';
-import { detectClaudeDirs } from './discovery.js';
+import type { BudgetConfig, BudgetState, BudgetScope, AlertEvent, BudgetCheckResult, BudgetCache, CheckBudgetOptions } from './types.js';
+import { detectClaudeDirs, discoverFiles } from './discovery.js';
 import { readBudgetConfig } from './budget-config.js';
 
-/**
- * Key for storing fired alert state: "scope:threshold" → timestamp
- */
+// ── Alert State ──────────────────────────────────────────────
+
 interface FiredAlerts {
   [key: string]: string;
 }
@@ -42,10 +43,8 @@ function alertKey(scope: BudgetScope, threshold: number): string {
   return `${scope}:${threshold}`;
 }
 
-/**
- * Find the most recent active session JSONL file.
- * Returns null if no active session found.
- */
+// ── Session Discovery ────────────────────────────────────────
+
 async function findActiveSessionJsonl(claudeDir?: string): Promise<string | null> {
   const dirs = claudeDir ? [claudeDir] : await detectClaudeDirs();
 
@@ -88,9 +87,8 @@ async function findActiveSessionJsonl(claudeDir?: string): Promise<string | null
   return null;
 }
 
-/**
- * Parse token usage from JSONL lines.
- */
+// ── Token Summation ──────────────────────────────────────────
+
 function sumTokensFromLines(lines: string[]): number {
   let total = 0;
 
@@ -105,12 +103,11 @@ function sumTokensFromLines(lines: string[]): number {
         const usage = message.usage as Record<string, unknown> | undefined;
 
         if (usage) {
-          const input = (usage.input_tokens as number) ?? 0;
-          const output = (usage.output_tokens as number) ?? 0;
-          const cacheRead = (usage.cache_read_input_tokens as number) ?? 0;
-          const cacheCreation = (usage.cache_creation_input_tokens as number) ?? 0;
-
-          total += input + output + cacheRead + cacheCreation;
+          total +=
+            ((usage.input_tokens as number) ?? 0) +
+            ((usage.output_tokens as number) ?? 0) +
+            ((usage.cache_read_input_tokens as number) ?? 0) +
+            ((usage.cache_creation_input_tokens as number) ?? 0);
         }
       }
     } catch {
@@ -122,9 +119,45 @@ function sumTokensFromLines(lines: string[]): number {
 }
 
 /**
- * Get tokens from the most recent active session using true tail-read.
- * Only reads the last ~8KB of the file for <200ms performance.
+ * Stream a JSONL file line-by-line and sum tokens.
+ * Avoids loading the full file into memory.
  */
+export async function sumTokensFromStream(filePath: string): Promise<number> {
+  let total = 0;
+
+  const rl = createInterface({
+    input: createReadStream(filePath, 'utf-8'),
+    crlfDelay: Infinity,
+  });
+
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+
+    try {
+      const record = JSON.parse(line) as Record<string, unknown>;
+
+      if (record.type === 'assistant' && record.message) {
+        const message = record.message as Record<string, unknown>;
+        const usage = message.usage as Record<string, unknown> | undefined;
+
+        if (usage) {
+          total +=
+            ((usage.input_tokens as number) ?? 0) +
+            ((usage.output_tokens as number) ?? 0) +
+            ((usage.cache_read_input_tokens as number) ?? 0) +
+            ((usage.cache_creation_input_tokens as number) ?? 0);
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return total;
+}
+
+// ── Active Session (fast tail-read) ──────────────────────────
+
 export async function getActiveSessionTokens(claudeDir?: string): Promise<number> {
   const jsonlPath = await findActiveSessionJsonl(claudeDir);
 
@@ -134,14 +167,12 @@ export async function getActiveSessionTokens(claudeDir?: string): Promise<number
     const fileStat = await stat(jsonlPath);
     const fileSize = fileStat.size;
 
-    // Read last 8KB (covers ~100 lines of typical JSONL)
     const TAIL_BYTES = 8192;
     const readStart = Math.max(0, fileSize - TAIL_BYTES);
     const readLength = fileSize - readStart;
 
     let content: string;
     if (readStart > 0) {
-      // True tail-read: only read the end of the file
       const handle = await open(jsonlPath, 'r');
       try {
         const buffer = Buffer.alloc(readLength);
@@ -150,13 +181,11 @@ export async function getActiveSessionTokens(claudeDir?: string): Promise<number
       } finally {
         await handle.close();
       }
-      // Discard partial first line (we started mid-file)
       const firstNewline = content.indexOf('\n');
       if (firstNewline !== -1) {
         content = content.slice(firstNewline + 1);
       }
     } else {
-      // Small file — just read it all
       content = await readFile(jsonlPath, 'utf-8');
     }
 
@@ -166,9 +195,84 @@ export async function getActiveSessionTokens(claudeDir?: string): Promise<number
   }
 }
 
+// ── Budget Cache ─────────────────────────────────────────────
+
+function getBudgetCachePath(): string {
+  return join(homedir(), '.claude', 'tokenomics-budget-cache.json');
+}
+
+export async function readBudgetCache(): Promise<BudgetCache | null> {
+  try {
+    const raw = await readFile(getBudgetCachePath(), 'utf-8');
+    return JSON.parse(raw) as BudgetCache;
+  } catch {
+    return null;
+  }
+}
+
+async function writeBudgetCache(cache: BudgetCache): Promise<void> {
+  const path = getBudgetCachePath();
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(cache, null, 2) + '\n', 'utf-8');
+}
+
+// ── Aggregation (daily / project) ────────────────────────────
+
 /**
- * Create budget state for a specific scope.
+ * Sum tokens from all JSONL files modified today.
  */
+export async function getDailyTokens(claudeDir?: string): Promise<number> {
+  const files = await discoverFiles({ days: 1, ...(claudeDir ? { claudeDir } : {}) });
+  let total = 0;
+
+  const BATCH = 20;
+  for (let i = 0; i < files.length; i += BATCH) {
+    const batch = files.slice(i, i + BATCH);
+    const results = await Promise.all(batch.map(f => sumTokensFromStream(f.path)));
+    total += results.reduce((sum, n) => sum + n, 0);
+  }
+
+  return total;
+}
+
+/**
+ * Sum tokens from all JSONL files in the last 30 days.
+ */
+export async function getProjectTokens(claudeDir?: string): Promise<number> {
+  const files = await discoverFiles({ days: 30, ...(claudeDir ? { claudeDir } : {}) });
+  let total = 0;
+
+  const BATCH = 20;
+  for (let i = 0; i < files.length; i += BATCH) {
+    const batch = files.slice(i, i + BATCH);
+    const results = await Promise.all(batch.map(f => sumTokensFromStream(f.path)));
+    total += results.reduce((sum, n) => sum + n, 0);
+  }
+
+  return total;
+}
+
+/**
+ * Compute real daily/project totals and write to cache.
+ */
+export async function refreshBudgetCache(claudeDir?: string): Promise<BudgetCache> {
+  const [daily, project] = await Promise.all([
+    getDailyTokens(claudeDir),
+    getProjectTokens(claudeDir),
+  ]);
+
+  const now = new Date().toISOString();
+  const cache: BudgetCache = {
+    daily: { tokens: daily, updatedAt: now },
+    project: { tokens: project, updatedAt: now },
+  };
+
+  await writeBudgetCache(cache);
+  return cache;
+}
+
+// ── Check Budget ─────────────────────────────────────────────
+
 function createBudgetState(
   scope: BudgetScope,
   used: number,
@@ -186,40 +290,74 @@ function createBudgetState(
 
 /**
  * Check budget against configured ceilings and thresholds.
- * Tracks fired alerts persistently so each threshold fires exactly once.
+ * Supports both legacy (BudgetConfig, string?) and new (CheckBudgetOptions) signatures.
  */
-export async function checkBudget(config?: BudgetConfig, claudeDir?: string): Promise<BudgetCheckResult> {
-  const budgetConfig = config ?? await readBudgetConfig();
+export async function checkBudget(
+  configOrOptions?: BudgetConfig | CheckBudgetOptions,
+  claudeDir?: string
+): Promise<BudgetCheckResult> {
+  let budgetConfig: BudgetConfig;
+  let dir: string | undefined;
+  let forceRefresh = false;
 
-  // Get token usage for all scopes
-  const sessionTokens = await getActiveSessionTokens(claudeDir);
+  if (configOrOptions && typeof configOrOptions === 'object' && 'forceRefresh' in configOrOptions) {
+    const opts = configOrOptions as CheckBudgetOptions;
+    budgetConfig = opts.config ?? await readBudgetConfig();
+    dir = opts.claudeDir ?? claudeDir;
+    forceRefresh = opts.forceRefresh ?? false;
+  } else {
+    budgetConfig = (configOrOptions as BudgetConfig | undefined) ?? await readBudgetConfig();
+    dir = claudeDir;
+  }
 
-  // Daily and project scopes use session tokens as baseline
-  // (full aggregation requires parsing all session files — deferred to future iteration)
-  const dailyTokens = sessionTokens;
-  const projectTokens = sessionTokens;
+  // Session scope — always fast tail-read
+  const sessionTokens = await getActiveSessionTokens(dir);
 
-  // Create states for all scopes
+  // Daily and project scopes
+  let dailyTokens: number;
+  let projectTokens: number;
+  const cachedScopes = new Set<BudgetScope>();
+
+  if (forceRefresh) {
+    // Real aggregation (manual --budget command)
+    const cache = await refreshBudgetCache(dir);
+    dailyTokens = cache.daily.tokens;
+    projectTokens = cache.project.tokens;
+  } else {
+    // Try cache first (hook path)
+    const cache = await readBudgetCache();
+    if (cache) {
+      dailyTokens = cache.daily.tokens;
+      projectTokens = cache.project.tokens;
+      cachedScopes.add('daily').add('project');
+    } else {
+      // No cache yet — fall back to session tokens
+      dailyTokens = sessionTokens;
+      projectTokens = sessionTokens;
+      cachedScopes.add('daily').add('project');
+    }
+  }
+
   const states: BudgetState[] = [
     createBudgetState('session', sessionTokens, budgetConfig.sessionCeiling),
     createBudgetState('daily', dailyTokens, budgetConfig.dailyCeiling),
     createBudgetState('project', projectTokens, budgetConfig.projectCeiling),
   ];
 
-  // Load previously fired alerts for deduplication
+  // Alert logic
   const firedAlerts = await readFiredAlerts();
   const newAlerts: AlertEvent[] = [];
   let ceilingExceeded = false;
   let exceededScope: BudgetScope | undefined;
 
   for (const state of states) {
-    // Check ceiling exceeded
     if (state.percent >= 100) {
       ceilingExceeded = true;
       exceededScope = state.scope;
     }
 
-    // Check threshold crossings — fire exactly once per threshold per scope
+    if (budgetConfig.muteAlerts) continue;
+
     for (const threshold of budgetConfig.alertThresholds) {
       const key = alertKey(state.scope, threshold);
 
@@ -235,7 +373,6 @@ export async function checkBudget(config?: BudgetConfig, claudeDir?: string): Pr
     }
   }
 
-  // Persist updated fired alerts
   if (newAlerts.length > 0) {
     await writeFiredAlerts(firedAlerts);
   }
@@ -245,13 +382,20 @@ export async function checkBudget(config?: BudgetConfig, claudeDir?: string): Pr
     newAlerts,
     ceilingExceeded,
     exceededScope,
+    cachedScopes,
   };
 }
+
+// ── Rendering ────────────────────────────────────────────────
 
 /**
  * Render budget dashboard as ASCII progress bars.
  */
-export function renderBudgetDashboard(states: BudgetState[], _config: BudgetConfig): string {
+export function renderBudgetDashboard(
+  states: BudgetState[],
+  _config: BudgetConfig,
+  cachedScopes?: Set<BudgetScope>
+): string {
   const lines: string[] = [];
 
   lines.push('Token Budget Status');
@@ -260,15 +404,20 @@ export function renderBudgetDashboard(states: BudgetState[], _config: BudgetConf
 
   for (const state of states) {
     const percentage = Math.round(state.percent);
-    const filled = Math.round(percentage / 2); // 50 chars = 100%
+    const filled = Math.round(percentage / 2);
     const bar = '\u2588'.repeat(filled) + '\u2591'.repeat(50 - filled);
 
     const emoji = percentage >= 90 ? '\u{1F534}' : percentage >= 75 ? '\u{1F7E1}' : '\u{1F7E2}';
+    const cached = cachedScopes?.has(state.scope) ? ' (cached)' : '';
 
-    lines.push(`${emoji} ${state.scope.toUpperCase()}: ${percentage}%`);
+    lines.push(`${emoji} ${state.scope.toUpperCase()}: ${percentage}%${cached}`);
     lines.push(`  ${bar}`);
     lines.push(`  ${state.used.toLocaleString()} / ${state.ceiling.toLocaleString()} tokens`);
     lines.push('');
+  }
+
+  if (cachedScopes && cachedScopes.size > 0) {
+    lines.push('Run `tokenomics --budget` to refresh daily/project totals.');
   }
 
   return lines.join('\n');

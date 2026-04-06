@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile, mkdir, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { getActiveSessionTokens, checkBudget, renderBudgetDashboard, renderBudgetCheckOutput } from '../src/budget.js';
+import { getActiveSessionTokens, checkBudget, renderBudgetDashboard, renderBudgetCheckOutput, sumTokensFromStream } from '../src/budget.js';
 import type { BudgetConfig, BudgetCheckResult } from '../src/types.js';
 
 async function makeTempDir(): Promise<string> {
@@ -207,6 +207,58 @@ describe('budget', () => {
       const sessionAlerts2 = result2.newAlerts.filter(a => a.scope === 'session' && a.threshold === 50);
       expect(sessionAlerts2).toHaveLength(0);
     });
+
+    it('suppresses alerts when muteAlerts is true', async () => {
+      const projectsDir = join(tempDir, 'projects', 'test-project');
+      await mkdir(projectsDir, { recursive: true });
+
+      const lines = Array(10)
+        .fill(0)
+        .map(() => makeJsonlLine('assistant', 13000, 13000))
+        .join('\n');
+
+      await writeFile(join(projectsDir, 'session.jsonl'), lines);
+
+      const config: BudgetConfig = {
+        sessionCeiling: 500_000,
+        dailyCeiling: 2_000_000,
+        projectCeiling: 10_000_000,
+        alertThresholds: [50, 80, 90],
+        ceilingAction: 'warn',
+        muteAlerts: true,
+      };
+
+      const result = await checkBudget(config, tempDir);
+      // Should still track state correctly
+      expect(result.states[0]!.percent).toBeGreaterThanOrEqual(50);
+      // But no alerts should fire
+      expect(result.newAlerts).toHaveLength(0);
+    });
+
+    it('still detects ceiling exceeded when muted', async () => {
+      const projectsDir = join(tempDir, 'projects', 'test-project');
+      await mkdir(projectsDir, { recursive: true });
+
+      const lines = Array(20)
+        .fill(0)
+        .map(() => makeJsonlLine('assistant', 13000, 13000))
+        .join('\n');
+
+      await writeFile(join(projectsDir, 'session.jsonl'), lines);
+
+      const config: BudgetConfig = {
+        sessionCeiling: 500_000,
+        dailyCeiling: 2_000_000,
+        projectCeiling: 10_000_000,
+        alertThresholds: [50, 80, 90],
+        ceilingAction: 'warn',
+        muteAlerts: true,
+      };
+
+      const result = await checkBudget(config, tempDir);
+      expect(result.ceilingExceeded).toBe(true);
+      expect(result.newAlerts).toHaveLength(0);
+    });
   });
 
   describe('renderBudgetDashboard', () => {
@@ -277,6 +329,124 @@ describe('budget', () => {
 
       const output = renderBudgetCheckOutput(result);
       expect(output).toContain('80%');
+    });
+  });
+
+  describe('checkBudget with CheckBudgetOptions', () => {
+    it('dispatches via options object (no cache)', async () => {
+      const config: BudgetConfig = {
+        sessionCeiling: 500_000,
+        dailyCeiling: 2_000_000,
+        projectCeiling: 10_000_000,
+        alertThresholds: [50, 80, 90],
+        ceilingAction: 'warn',
+      };
+
+      const result = await checkBudget({ config, claudeDir: tempDir, forceRefresh: false });
+
+      expect(result.states).toHaveLength(3);
+      // No session files in tempDir → all zeros, no ceiling exceeded
+      expect(result.ceilingExceeded).toBe(false);
+      // No cache exists → daily and project should be in cachedScopes (session fallback)
+      expect(result.cachedScopes).toBeDefined();
+      expect(result.cachedScopes!.has('daily')).toBe(true);
+      expect(result.cachedScopes!.has('project')).toBe(true);
+    });
+
+    it('forceRefresh path computes real totals', async () => {
+      const config: BudgetConfig = {
+        sessionCeiling: 500_000,
+        dailyCeiling: 2_000_000,
+        projectCeiling: 10_000_000,
+        alertThresholds: [50, 80, 90],
+        ceilingAction: 'warn',
+      };
+
+      const result = await checkBudget({ config, claudeDir: tempDir, forceRefresh: true });
+
+      expect(result.states).toHaveLength(3);
+      // forceRefresh writes cache → cachedScopes should be empty
+      expect(result.cachedScopes).toBeDefined();
+      expect(result.cachedScopes!.size).toBe(0);
+    });
+  });
+
+  describe('sumTokensFromStream', () => {
+    it('counts tokens from a JSONL file', async () => {
+      const lines = [
+        makeJsonlLine('assistant', 1000, 500),
+        makeJsonlLine('assistant', 2000, 1000),
+        makeJsonlLine('user', 500, 0),        // user messages are skipped
+        makeJsonlLine('assistant', 3000, 1500),
+        '',                                     // blank lines are skipped
+        'not valid json',                       // malformed lines are skipped
+      ].join('\n');
+
+      const filePath = join(tempDir, 'test-session.jsonl');
+      await writeFile(filePath, lines);
+
+      const total = await sumTokensFromStream(filePath);
+      // Only assistant lines: 1000+500 + 2000+1000 + 3000+1500 = 9000
+      expect(total).toBe(9000);
+    });
+
+    it('returns 0 for empty file', async () => {
+      const filePath = join(tempDir, 'empty.jsonl');
+      await writeFile(filePath, '');
+
+      const total = await sumTokensFromStream(filePath);
+      expect(total).toBe(0);
+    });
+  });
+
+  describe('renderBudgetDashboard with cachedScopes', () => {
+    it('shows (cached) label for cached scopes', () => {
+      const config: BudgetConfig = {
+        sessionCeiling: 500_000,
+        dailyCeiling: 2_000_000,
+        projectCeiling: 10_000_000,
+        alertThresholds: [50, 80, 90],
+        ceilingAction: 'warn',
+      };
+
+      const states = [
+        { scope: 'session' as const, used: 100_000, ceiling: 500_000, percent: 20 },
+        { scope: 'daily' as const, used: 500_000, ceiling: 2_000_000, percent: 25 },
+        { scope: 'project' as const, used: 2_000_000, ceiling: 10_000_000, percent: 20 },
+      ];
+
+      const cachedScopes = new Set(['daily', 'project'] as const);
+      const output = renderBudgetDashboard(states, config, cachedScopes);
+
+      // Session should NOT have (cached) label
+      expect(output).toContain('SESSION: 20%');
+      expect(output).not.toMatch(/SESSION:.*\(cached\)/);
+
+      // Daily and project should have (cached) label
+      expect(output).toContain('DAILY: 25% (cached)');
+      expect(output).toContain('PROJECT: 20% (cached)');
+
+      // Refresh hint should appear
+      expect(output).toContain('tokenomics --budget');
+    });
+
+    it('hides refresh hint when no scopes are cached', () => {
+      const config: BudgetConfig = {
+        sessionCeiling: 500_000,
+        dailyCeiling: 2_000_000,
+        projectCeiling: 10_000_000,
+        alertThresholds: [50, 80, 90],
+        ceilingAction: 'warn',
+      };
+
+      const states = [
+        { scope: 'session' as const, used: 100_000, ceiling: 500_000, percent: 20 },
+        { scope: 'daily' as const, used: 500_000, ceiling: 2_000_000, percent: 25 },
+        { scope: 'project' as const, used: 2_000_000, ceiling: 10_000_000, percent: 20 },
+      ];
+
+      const output = renderBudgetDashboard(states, config, new Set());
+      expect(output).not.toContain('tokenomics --budget');
     });
   });
 });

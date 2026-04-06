@@ -113,55 +113,41 @@ When a threshold is crossed, CLAUDE.md gets updated. Claude then **suggests** ac
 | `--setup` | One-time — install hooks + create budget config |
 | `--inject` | Manually refresh CLAUDE.md insights |
 
-## The `--prompt` Algorithm
+## How `--prompt` Works
 
-`tokenomics --prompt "your prompt here"` does two things:
+`tokenomics --prompt "your prompt here"` analyzes your prompt before you send it to Claude and returns two things:
 
-### Part 1: Model Routing
+1. **Model recommendation** — which Claude model is the best fit (and why)
+2. **Quality grade** — whether your prompt will waste tokens
 
-Analyzes the prompt for complexity signals and recommends the cheapest model that can handle it.
+### Model Routing
 
-**Signal extraction:**
-1. **Complex keywords** (word-boundary match): design, plan, combine, compare, analyze, integrate, understand, review, architecture, refactor, optimize, algorithm, etc.
-2. **Simple keywords** (word-boundary match): fix, typo, rename, format, add, remove, delete, build, compile, lint, etc.
-3. **Structural signals**: URL references, code blocks, file references, word count
+The router reads your prompt for complexity signals:
 
-**Routing priority:**
-1. Complex keywords detected → Opus
-2. Multiple complexity signals (2+) → Opus
-3. URL reference → Opus (research/integration task)
-4. High project simple rate (>60%) → Sonnet
-5. Very short prompt (<10 words, no files) → Sonnet
-6. Long prompt (>50 words) or many files (>3) → Opus
-7. Simple keywords only → Sonnet
-8. Default → Sonnet (safe for most tasks)
+| Signal | Example | Routes to |
+|--------|---------|-----------|
+| Complex keywords | "design", "plan", "analyze", "refactor", "architecture" | Opus |
+| Simple keywords | "fix", "rename", "format", "lint" | Sonnet |
+| URLs or code blocks | `https://...`, `` ```code``` `` | Opus |
+| Very short prompt | <10 words, no file references | Sonnet |
+| Multiple file references | >3 files mentioned | Opus |
 
-Complex signals always win over simple signals.
+**Priority:** Complex signals always win. If your prompt says "fix the typo" it routes to Sonnet (~80% cheaper). If it says "design and implement" it routes to Opus.
 
-### Part 2: Prompt Quality Audit
+### Prompt Quality Audit
 
-Checks the prompt for waste patterns and assigns a grade.
+Checks your prompt for common waste patterns and assigns a grade:
 
-**Built-in rules:**
+| Grade | Meaning |
+|-------|---------|
+| A | Clean — no issues found |
+| B | Minor — small improvements possible |
+| C | Warning — prompt wastes tokens |
+| D | Critical — significant waste |
 
-| Rule | Detects | Severity |
-|------|---------|----------|
-| Redundant File Paste | Code blocks >30 lines pasted into prompt | Warning |
-| Verbose Error Log | Stack traces >15 frames | Info |
-| Low Specificity | <10 words, no file or function references | Info |
-| Over-Scoped Request | "fix all", "refactor everything" patterns | Warning |
-| Duplicate Context | Same sentence repeated 2+ times | Info |
+The audit detects: pasted code blocks that Claude could read itself, vague prompts without file/function names, over-scoped requests like "fix everything", and duplicate context.
 
-**Grade calculation:**
-
-| Grade | Criteria |
-|-------|----------|
-| A | Zero findings — prompt is well-optimized |
-| B | Info findings only — minor improvements possible |
-| C | Warnings present — prompt wastes tokens |
-| D | Critical findings — significant waste |
-
-**Combined output example:**
+### Example
 
 ```
 $ tokenomics --prompt "fix all the bugs everywhere and refactor everything"
@@ -174,47 +160,49 @@ Waste:   ~700 tokens
   [warning] Over-Scoped Request — Scope the work to specific files
 ```
 
-## The Budget Algorithm
+## How the Budget Works
 
-### How tokens are counted
+Tokenomics tracks your token spend across three scopes:
 
-Claude Code writes session data to JSONL files at `~/.claude/projects/<hash>/<session-id>.jsonl`. Each assistant message includes a `usage` field:
+| Scope | What it measures | Default ceiling |
+|-------|-----------------|----------------|
+| Session | Current active Claude Code session | 500K tokens |
+| Daily | All sessions today (currently: same as session) | 2M tokens |
+| Project | Rolling 30 days (currently: same as session) | 10M tokens |
 
-```json
-{"type":"assistant","message":{"usage":{"input_tokens":2500,"output_tokens":800,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}
-```
+### How it counts tokens
 
-Tokenomics sums `input_tokens + output_tokens + cache_read_input_tokens + cache_creation_input_tokens` across records.
+The budget reads the **current active session** — the most recently modified JSONL file in `~/.claude/projects/`. It sums `input_tokens + output_tokens + cache tokens` from each assistant message. For the background hook (runs after every tool use), it only reads the last 8KB of the file to keep it fast.
 
-### How tail-read works
-
-For the PostToolUse hook (runs after every tool use), reading the entire JSONL would be too slow. Instead:
-
-1. Get file size via `fs.stat()`
-2. If file > 8KB, open with `fs.open()` and read only the last 8KB
-3. Discard the partial first line (we started mid-file)
-4. Parse only those lines for token totals
-
-This keeps the hook under 5ms for large session files.
-
-### Three scopes
-
-| Scope | Period | Default Ceiling |
-|-------|--------|----------------|
-| Session | Single Claude Code session | 500K tokens |
-| Daily | Calendar day (all sessions today) | 2M tokens |
-| Project | Rolling 30 days | 10M tokens |
+**Current limitation:** Daily and project scopes both read from the same active session file. Aggregation across all session files is planned for a future release. For now, all three scopes show the same number.
 
 ### Alert thresholds
 
-Each scope tracks alerts at 50%, 80%, and 90% of its ceiling. Alerts fire **exactly once** per threshold — the fired state is persisted in `~/.claude/tokenomics-alerts.json`.
+Each scope triggers alerts at 50%, 80%, and 90% of its ceiling. Each alert fires **once** — tokenomics remembers which thresholds have already fired.
 
-When 100% is reached, the `ceilingAction` controls what text gets injected into CLAUDE.md:
-- `"warn"` — injects a warning message. Claude sees it and suggests wrapping up.
-- `"downgrade"` — injects "switch to Sonnet" suggestion. Claude may suggest running `/model sonnet`.
-- `"pause"` — injects "ask user before continuing" instruction. Claude may ask for confirmation.
+When a scope hits 100%, the `ceilingAction` setting controls what Claude sees:
 
-**Note:** These are text instructions Claude reads as guidance. Tokenomics cannot force model changes — that requires the user running `/model` in Claude Code.
+| Action | What happens |
+|--------|-------------|
+| `warn` (default) | Claude suggests wrapping up or being more concise |
+| `downgrade` | Claude suggests switching to Sonnet (`/model sonnet`) |
+| `pause` | Claude asks for your confirmation before continuing |
+
+These are suggestions Claude reads from CLAUDE.md — tokenomics cannot force model changes.
+
+### Disable alerts
+
+To turn off budget alerts entirely:
+
+```bash
+# One-time: run budget check without alerts
+tokenomics --budget --no-alerts
+
+# Persistent: add to config
+# Edit ~/.claude/tokenomics.json and set "muteAlerts": true
+```
+
+When `muteAlerts` is `true`, the budget check still runs and shows the dashboard, but no alerts are injected into CLAUDE.md.
 
 ### Configuration
 
@@ -226,7 +214,8 @@ Budget config lives at `~/.claude/tokenomics.json`:
   "dailyCeiling": 2000000,
   "projectCeiling": 10000000,
   "alertThresholds": [50, 80, 90],
-  "ceilingAction": "warn"
+  "ceilingAction": "warn",
+  "muteAlerts": false
 }
 ```
 
@@ -237,6 +226,7 @@ Budget config lives at `~/.claude/tokenomics.json`:
 | `--prompt <text>` | Analyze a prompt: model recommendation + quality grade | - |
 | `--budget` | Show token budget dashboard | false |
 | `--budget-check` | Lightweight budget check (for hooks) | false |
+| `--no-alerts` | Suppress budget alerts (no CLAUDE.md injection) | false |
 | `--html` | Generate HTML report and open in browser | false |
 | `--json` | Output JSON (pipe to jq, scripts, etc.) | false |
 | `--report` | Full markdown coaching report | false |

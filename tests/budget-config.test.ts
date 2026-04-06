@@ -136,6 +136,7 @@ describe('budget-config', () => {
         projectCeiling: 30_000_000,
         alertThresholds: [33, 66, 99],
         ceilingAction: 'pause' as const,
+        muteAlerts: false,
       };
 
       await writeBudgetConfig(original, configPath);
@@ -163,6 +164,15 @@ describe('budget-config', () => {
       const read = await readBudgetConfig(configPath);
 
       expect(read.alertThresholds).toEqual(thresholds);
+    });
+
+    it('persists muteAlerts setting', async () => {
+      const config = { ...DEFAULT_BUDGET, muteAlerts: true };
+
+      await writeBudgetConfig(config, configPath);
+      const read = await readBudgetConfig(configPath);
+
+      expect(read.muteAlerts).toBe(true);
     });
   });
 });
