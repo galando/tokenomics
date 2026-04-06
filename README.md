@@ -2,7 +2,9 @@
 
 A CLI tool that analyzes your Claude Code session history to identify token waste patterns and provide actionable fixes. Runs locally, no LLM needed.
 
-**v2.0.0** adds a **real-time optimization layer**: prompt analysis (`--prompt`), token budget tracking (`--budget`), and automatic behavioral coaching inside your Claude Code sessions.
+**v2.0.0** adds prompt analysis (`--prompt`), token budget tracking (`--budget`), and behavioral coaching injected into your Claude Code sessions.
+
+**The mental model: tokenomics is a coach, not a remote control.** It writes suggestions into your CLAUDE.md where Claude can see them. Claude is smart enough to follow most of them — suggesting `/compact` when context grows, recommending Sonnet for simple tasks, warning when you're overspending. But it cannot switch models, run commands, or force behavior. The user is always in control.
 
 ## Install
 
