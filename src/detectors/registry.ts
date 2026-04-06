@@ -8,6 +8,7 @@ import { detectSessionTiming } from './session-timing.js';
 import { detectSubagentOpportunity } from './subagent-opportunity.js';
 import { detectClaudeMdOverhead } from './claude-md-overhead.js';
 import { detectMcpToolTax } from './mcp-tool-tax.js';
+import { routerToDetectorResult } from '../router.js';
 
 const detectors: Detector[] = [
   { name: 'context-snowball', detect: detectContextSnowball },
@@ -22,6 +23,7 @@ const detectors: Detector[] = [
 const asyncDetectors = [
   { name: 'claude-md-overhead', detect: detectClaudeMdOverhead },
   { name: 'mcp-tool-tax', detect: detectMcpToolTax },
+  { name: 'smart-router', detect: (sessions: SessionData[]) => routerToDetectorResult(sessions) },
 ];
 
 export function runAllDetectors(sessions: SessionData[]): DetectorResult[] {

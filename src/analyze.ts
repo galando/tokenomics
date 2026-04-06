@@ -27,6 +27,10 @@ import { renderHtmlReport } from './report-html.js';
 import { injectFindings } from './injector.js';
 import { installHooks } from './hooks.js';
 import { optimizeSettings, applySettings } from './optimizer.js';
+import { extractSignals, routePrompt, renderRouteOutput } from './router.js';
+import { checkBudget, renderBudgetDashboard, renderBudgetCheckOutput } from './budget.js';
+import { auditPrompt, renderAuditOutput } from './auditor.js';
+import { ensureBudgetConfig } from './budget-config.js';
 
 const VERSION = '1.3.2';
 
@@ -50,6 +54,10 @@ function parseCliArgs(): CliOptions {
       inject: { type: 'boolean', default: false },
       setup: { type: 'boolean', default: false },
       quiet: { type: 'boolean', default: false },
+      route: { type: 'string' },
+      budget: { type: 'boolean', default: false },
+      'budget-check': { type: 'boolean', default: false },
+      audit: { type: 'boolean', default: false },
     },
     strict: true,
   });
@@ -74,6 +82,10 @@ function parseCliArgs(): CliOptions {
     inject: values.inject,
     setup: values.setup,
     quiet: values.quiet,
+    route: values.route,
+    budget: values.budget,
+    budgetCheck: values['budget-check'],
+    audit: values.audit,
   };
 }
 
@@ -111,6 +123,12 @@ INTEGRATION
   --inject             Run analysis + inject findings into CLAUDE.md
   --quiet              Suppress output (used by SessionStart hooks)
 
+NEW FEATURES
+  --route <prompt>     Route prompt to optimal model (Sonnet/Opus)
+  --budget             Show token budget dashboard
+  --budget-check       Lightweight budget check (for hooks)
+  --audit              Audit prompt from stdin for waste patterns
+
 OTHER
   --verbose            Show discovery progress and debug info
   --help               Show this message
@@ -129,6 +147,9 @@ EXAMPLES
   tokenomics --fix --dry-run        Preview auto-fixes
   tokenomics --fix                  Apply fixes
   tokenomics --claude-dir ~/.claude-zai   Analyze specific installation
+  tokenomics --route "fix bug"      Route prompt to optimal model
+  tokenomics --budget               Show budget dashboard
+  echo "fix bug" | tokenomics --audit   Audit prompt for waste
 `);
 }
 
@@ -472,6 +493,42 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  // ── Route mode ──
+  if (options.route) {
+    const signals = extractSignals(options.route);
+    const decision = routePrompt(signals);
+    console.log(renderRouteOutput(decision));
+    return;
+  }
+
+  // ── Budget mode ──
+  if (options.budget) {
+    const config = await ensureBudgetConfig();
+    const result = await checkBudget(config.config);
+    console.log(renderBudgetDashboard(result.states, config.config));
+    return;
+  }
+
+  // ── Budget check mode (for hooks) ──
+  if (options.budgetCheck) {
+    const result = await checkBudget();
+    console.log(renderBudgetCheckOutput(result));
+    process.exit(result.ceilingExceeded ? 1 : 0);
+    return;
+  }
+
+  // ── Audit mode (stdin) ──
+  if (options.audit) {
+    let prompt = '';
+    // Read from stdin
+    for await (const chunk of process.stdin) {
+      prompt += chunk;
+    }
+    const report = auditPrompt(prompt);
+    console.log(renderAuditOutput(report));
+    return;
+  }
+
   // Discover JSONL files (auto-detects all ~/.claude* installations)
   const discoveryOpts: import('./types.js').DiscoveryOptions = {
     days: options.days,
@@ -515,6 +572,7 @@ async function main(): Promise<void> {
   if (options.setup) {
     const projectDir = process.cwd();
     const hookResult = await installHooks();
+    const budgetConfigResult = await ensureBudgetConfig();
     const injectResult = await injectFindings(findings, projectDir);
 
     if (!options.quiet) {
@@ -524,6 +582,7 @@ async function main(): Promise<void> {
       console.log('');
       console.log(`  Hook:      ${hookResult.installed ? 'Installed' : 'Already installed'}`);
       console.log(`  Settings:  ${hookResult.path}`);
+      console.log(`  Budget:    ${budgetConfigResult.created ? 'Created' : 'Exists'} (~/.claude/tokenomics.json)`);
       console.log(`  Injected:  ${injectResult.instructionCount} instructions into ${injectResult.targets.length} CLAUDE.md file(s)`);
       for (const target of injectResult.targets) {
         const status = target.existed ? 'Updated' : 'Created';
