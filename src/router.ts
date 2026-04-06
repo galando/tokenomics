@@ -7,19 +7,22 @@
 
 import type { SessionData, PromptSignals, RouteDecision, RouterEvidence, DetectorResult } from './types.js';
 
-// Keyword patterns for complexity detection
+// Keyword patterns for complexity detection — matched as whole words
 const COMPLEX_KEYWORDS = [
   'design', 'architecture', 'schema', 'system', 'multi-tenant',
   'refactor', 'optimize', 'algorithm', 'complex', 'intricate',
-  'debugging across', 'multiple files', 'integration', 'api design',
-  'database design', 'security', 'authentication', 'authorization',
-  'performance optimization', 'scalability', 'migration',
+  'integration', 'migration', 'scalability', 'security',
+  'authentication', 'authorization', 'debugging',
+  // Reasoning signals
+  'plan', 'combine', 'compare', 'analyze', 'integrate',
+  'understand', 'review', 'evaluate', 'investigate', 'assess',
+  'recommend', 'propose', 'derive', 'infer', 'synthesize',
 ];
 
 const SIMPLE_KEYWORDS = [
-  'fix', 'typo', 'rename', 'format', 'update', 'change', 'add',
-  'remove', 'delete', 'read', 'show', 'list', 'check', 'test',
-  'run', 'build', 'compile', 'lint', 'format', 'sort', 'filter',
+  'fix', 'typo', 'rename', 'format', 'update', 'add',
+  'remove', 'delete', 'show', 'list', 'check', 'test',
+  'build', 'compile', 'lint', 'sort', 'filter',
 ];
 
 // File reference patterns (file.ts, path/to/file, etc.)
@@ -29,21 +32,39 @@ const FILE_REF_PATTERN = /[\w\-./]+\.(ts|js|tsx|jsx|py|java|go|rs|css|html|md|js
 const SIMPLE_TOOLS = new Set(['Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep']);
 
 /**
+ * Match a keyword as a whole word (word-boundary regex).
+ * Prevents "focus" matching inside "focus", but also prevents "fix" matching "prefix".
+ */
+function hasKeyword(text: string, keyword: string): boolean {
+  return new RegExp(`\\b${keyword}\\b`, 'i').test(text);
+}
+
+/**
+ * Check if text contains any keyword from a list (word-boundary matching).
+ */
+function hasAnyKeyword(text: string, keywords: string[]): boolean {
+  return keywords.some(kw => hasKeyword(text, kw));
+}
+
+/**
  * Extract signals from a prompt for routing decisions.
  */
 export function extractSignals(prompt: string): PromptSignals {
   const words = prompt.trim().split(/\s+/).filter(w => w.length > 0);
   const wordCount = words.length;
 
-  // Check for keywords
-  const lowerPrompt = prompt.toLowerCase();
-  const hasSimpleKeywords = SIMPLE_KEYWORDS.some(kw => lowerPrompt.includes(kw));
-  const hasComplexKeywords = COMPLEX_KEYWORDS.some(kw => lowerPrompt.includes(kw));
+  // Check for keywords using word-boundary matching
+  const hasSimpleKeywords = hasAnyKeyword(prompt, SIMPLE_KEYWORDS);
+  const hasComplexKeywords = hasAnyKeyword(prompt, COMPLEX_KEYWORDS);
 
   // Extract file references
   const fileMatches = prompt.match(FILE_REF_PATTERN) ?? [];
-  const fileReferences = [...new Set(fileMatches)]; // Deduplicate
+  const fileReferences = [...new Set(fileMatches)];
   const fileReferenceCount = fileReferences.length;
+
+  // Detect structural complexity signals
+  const hasUrlReference = /https?:\/\//i.test(prompt);
+  const hasCodeBlock = /```/.test(prompt);
 
   return {
     wordCount,
@@ -51,6 +72,8 @@ export function extractSignals(prompt: string): PromptSignals {
     hasComplexKeywords,
     fileReferenceCount,
     fileReferences,
+    hasUrlReference,
+    hasCodeBlock,
   };
 }
 
@@ -112,61 +135,80 @@ export function buildProjectBaseline(sessions: SessionData[]): RouterEvidence {
 
 /**
  * Route a prompt to the optimal model based on signals and historical baseline.
+ * Complex signals always win over simple signals.
  */
 export function routePrompt(signals: PromptSignals, baseline?: RouterEvidence): RouteDecision {
-  const { wordCount, hasSimpleKeywords, hasComplexKeywords, fileReferenceCount } = signals;
+  const { wordCount, hasSimpleKeywords, hasComplexKeywords, fileReferenceCount, hasUrlReference, hasCodeBlock } = signals;
 
-  // Priority chain for routing
+  // Score-based routing: count complex signals
+  const complexSignals = [
+    hasComplexKeywords,
+    hasUrlReference,
+    wordCount > 50,
+    fileReferenceCount > 3,
+    hasCodeBlock,
+  ].filter(Boolean).length;
 
-  // 1. Complex keywords -> Opus
-  if (hasComplexKeywords) {
+  // 1. Strong complex signal -> Opus
+  if (hasComplexKeywords || complexSignals >= 2) {
     return {
       model: 'claude-opus-4-6',
-      confidence: 0.85,
-      reason: 'Complex reasoning keywords detected',
+      confidence: Math.min(0.95, 0.80 + complexSignals * 0.05),
+      reason: hasComplexKeywords
+        ? 'Complex reasoning keywords detected'
+        : 'Multiple complexity signals detected',
       estimatedSavings: '~0% vs Opus (already optimal)',
       signals,
     };
   }
 
-  // 2. Historical pattern: if project has high simple rate, default to Sonnet
-  if (baseline && baseline.simpleSessionRate > 60 && !hasComplexKeywords) {
+  // 2. URL reference -> likely research/integration task -> Opus
+  if (hasUrlReference) {
+    return {
+      model: 'claude-opus-4-6',
+      confidence: 0.80,
+      reason: 'URL reference detected — likely a research or integration task',
+      estimatedSavings: '~0% vs Opus (already optimal)',
+      signals,
+    };
+  }
+
+  // 3. Historical pattern: if project has high simple rate, default to Sonnet
+  if (baseline && baseline.simpleSessionRate > 60) {
     return {
       model: 'claude-sonnet-4-6',
       confidence: 0.75,
-      reason: `Project has ${baseline.simpleSessionRate}% simple sessions - Sonnet is usually sufficient`,
+      reason: `Project has ${baseline.simpleSessionRate}% simple sessions — Sonnet is usually sufficient`,
       estimatedSavings: '~80% vs Opus',
       signals,
     };
   }
 
-  // 3. Structural analysis
+  // 4. Structural analysis
   if (wordCount < 10 && fileReferenceCount === 0 && !hasComplexKeywords) {
-    // Very vague prompt - might need more context, but Sonnet should handle it
     return {
       model: 'claude-sonnet-4-6',
       confidence: 0.70,
-      reason: 'Simple request - Sonnet can handle',
+      reason: 'Simple request — Sonnet can handle',
       estimatedSavings: '~80% vs Opus',
       signals,
     };
   }
 
   if (wordCount > 50 || fileReferenceCount > 3) {
-    // Longer prompt or multi-file reference -> likely complex
     return {
       model: 'claude-opus-4-6',
       confidence: 0.80,
       reason: fileReferenceCount > 3
-        ? `References ${fileReferenceCount} files - likely complex task`
-        : 'Detailed prompt - may require complex reasoning',
+        ? `References ${fileReferenceCount} files — likely complex task`
+        : 'Detailed prompt — may require complex reasoning',
       estimatedSavings: '~0% vs Opus (already optimal)',
       signals,
     };
   }
 
-  // 4. Simple keywords -> Sonnet
-  if (hasSimpleKeywords && !hasComplexKeywords) {
+  // 5. Simple keywords -> Sonnet (only if no complex signals)
+  if (hasSimpleKeywords) {
     return {
       model: 'claude-sonnet-4-6',
       confidence: 0.85,
@@ -176,7 +218,7 @@ export function routePrompt(signals: PromptSignals, baseline?: RouterEvidence): 
     };
   }
 
-  // 5. Default: Sonnet (safe default for most tasks)
+  // 6. Default: Sonnet (safe default for most tasks)
   return {
     model: 'claude-sonnet-4-6',
     confidence: 0.70,

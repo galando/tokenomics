@@ -474,14 +474,12 @@ export interface CliOptions {
   setup: boolean;
   /** Suppress output (used by SessionStart hooks) */
   quiet: boolean;
-  /** Route a prompt to optimal model */
-  route: string | undefined;
+  /** Analyze a prompt: model recommendation + quality grade */
+  prompt: string | undefined;
   /** Show budget dashboard */
   budget: boolean;
   /** Run lightweight budget check (for hooks) */
   budgetCheck: boolean;
-  /** Audit a prompt for waste patterns */
-  audit: boolean;
 }
 
 // ============================================================================
@@ -499,6 +497,10 @@ export interface PromptSignals {
   fileReferenceCount: number;
   /** List of file references found */
   fileReferences: string[];
+  /** Whether the prompt contains a URL */
+  hasUrlReference: boolean;
+  /** Whether the prompt contains a code block */
+  hasCodeBlock: boolean;
 }
 
 export interface RouteDecision {

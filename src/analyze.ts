@@ -27,12 +27,13 @@ import { renderHtmlReport } from './report-html.js';
 import { injectFindings } from './injector.js';
 import { installHooks } from './hooks.js';
 import { optimizeSettings, applySettings } from './optimizer.js';
-import { extractSignals, routePrompt, renderRouteOutput } from './router.js';
+import { extractSignals, routePrompt } from './router.js';
 import { checkBudget, renderBudgetDashboard, renderBudgetCheckOutput } from './budget.js';
-import { auditPrompt, renderAuditOutput } from './auditor.js';
+import { auditPrompt } from './auditor.js';
+import { renderPromptOutput } from './prompt-output.js';
 import { ensureBudgetConfig } from './budget-config.js';
 
-const VERSION = '1.3.2';
+const VERSION = '2.0.0';
 
 // ─── CLI ──────────────────────────────────────────────────────────────────────
 
@@ -54,10 +55,9 @@ function parseCliArgs(): CliOptions {
       inject: { type: 'boolean', default: false },
       setup: { type: 'boolean', default: false },
       quiet: { type: 'boolean', default: false },
-      route: { type: 'string' },
+      prompt: { type: 'string' },
       budget: { type: 'boolean', default: false },
       'budget-check': { type: 'boolean', default: false },
-      audit: { type: 'boolean', default: false },
     },
     strict: true,
   });
@@ -82,10 +82,9 @@ function parseCliArgs(): CliOptions {
     inject: values.inject,
     setup: values.setup,
     quiet: values.quiet,
-    route: values.route,
+    prompt: values.prompt,
     budget: values.budget,
     budgetCheck: values['budget-check'],
-    audit: values.audit,
   };
 }
 
@@ -123,11 +122,10 @@ INTEGRATION
   --inject             Run analysis + inject findings into CLAUDE.md
   --quiet              Suppress output (used by SessionStart hooks)
 
-NEW FEATURES
-  --route <prompt>     Route prompt to optimal model (Sonnet/Opus)
+PROMPT ANALYSIS
+  --prompt <text>      Analyze a prompt: model recommendation + quality grade
   --budget             Show token budget dashboard
   --budget-check       Lightweight budget check (for hooks)
-  --audit              Audit prompt from stdin for waste patterns
 
 OTHER
   --verbose            Show discovery progress and debug info
@@ -147,9 +145,9 @@ EXAMPLES
   tokenomics --fix --dry-run        Preview auto-fixes
   tokenomics --fix                  Apply fixes
   tokenomics --claude-dir ~/.claude-zai   Analyze specific installation
-  tokenomics --route "fix bug"      Route prompt to optimal model
+  tokenomics --prompt "fix bug"     Analyze prompt (model + grade)
   tokenomics --budget               Show budget dashboard
-  echo "fix bug" | tokenomics --audit   Audit prompt for waste
+  tokenomics --prompt "design a schema"  Check complex prompt
 `);
 }
 
@@ -493,11 +491,12 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // ── Route mode ──
-  if (options.route) {
-    const signals = extractSignals(options.route);
+  // ── Prompt analysis mode ──
+  if (options.prompt) {
+    const signals = extractSignals(options.prompt);
     const decision = routePrompt(signals);
-    console.log(renderRouteOutput(decision));
+    const report = auditPrompt(options.prompt);
+    console.log(renderPromptOutput(decision, report));
     return;
   }
 
@@ -514,18 +513,6 @@ async function main(): Promise<void> {
     const result = await checkBudget();
     console.log(renderBudgetCheckOutput(result));
     process.exit(result.ceilingExceeded ? 1 : 0);
-    return;
-  }
-
-  // ── Audit mode (stdin) ──
-  if (options.audit) {
-    let prompt = '';
-    // Read from stdin
-    for await (const chunk of process.stdin) {
-      prompt += chunk;
-    }
-    const report = auditPrompt(prompt);
-    console.log(renderAuditOutput(report));
     return;
   }
 
