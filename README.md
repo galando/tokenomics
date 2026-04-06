@@ -42,17 +42,17 @@ tokenomics --json                 # Machine-readable JSON
 
 ## How It Works Inside Claude Code
 
-After running `tokenomics --setup`, three things happen automatically every time you use Claude Code:
+After running `tokenomics --setup`, two hooks are installed. They run silently in the background during your Claude Code sessions.
 
-### 1. SessionStart Hook — Smart Coaching
+### 1. SessionStart Hook — Behavioral Coaching (automatic)
 
-When you start a Claude Code session, the SessionStart hook runs `tokenomics --inject --quiet`. This:
+When you start a Claude Code session, the hook runs `tokenomics --inject --quiet`. This:
 
 1. Reads your past session history (JSONL files in `~/.claude/projects/`)
 2. Runs all detectors (context snowball, model selection, vague prompts, etc.)
-3. **Writes behavioral insights into your CLAUDE.md** between `<!-- TOKENOMICS:START -->` and `<!-- TOKENOMICS:END -->` markers
+3. Writes behavioral insights into your CLAUDE.md between `<!-- TOKENOMICS:START -->` and `<!-- TOKENOMICS:END -->` markers
 
-Claude reads CLAUDE.md at the start of every session. It sees instructions like:
+Claude reads CLAUDE.md at session start and sees instructions like:
 
 ```markdown
 <!-- TOKENOMICS:START -->
@@ -68,11 +68,19 @@ Claude reads CLAUDE.md at the start of every session. It sees instructions like:
 <!-- TOKENOMICS:END -->
 ```
 
-Claude follows these automatically — no manual effort from you.
+**What Claude actually does with this:**
 
-### 2. PostToolUse Hook — Budget Monitoring
+| Instruction | What Claude does |
+|------------|-----------------|
+| "Prefer Sonnet for simple tasks" | Claude **suggests** switching to Sonnet. You still need to run `/model sonnet` yourself. |
+| "Use /compact after turn 5-7" | Claude **suggests** running `/compact` when context grows. You run it. |
+| "Include file paths in prompts" | Claude may **remind** you to be specific when you send vague prompts. |
 
-After every tool use (Read, Edit, Bash, etc.), the PostToolUse hook runs `tokenomics --budget-check`. This:
+Tokenomics cannot switch models or run commands on its own. It writes suggestions into CLAUDE.md, and Claude treats them as behavioral guidance. Think of it as a coach whispering tips — Claude listens, but the user is always in control.
+
+### 2. PostToolUse Hook — Budget Monitoring (automatic)
+
+After every tool use (Read, Edit, Bash, etc.), the hook runs `tokenomics --budget-check`. This:
 
 1. Finds the active session JSONL file (most recently modified)
 2. **Tail-reads only the last ~8KB** (not the whole file — keeps it under 200ms)
@@ -87,13 +95,17 @@ Your budget config (~/.claude/tokenomics.json):
   Project: 10M tokens     → same thresholds
 ```
 
-When a threshold is crossed, Claude sees it in CLAUDE.md and adjusts (e.g., suggests wrapping up, or auto-downgrades to Sonnet if `ceilingAction` is `"downgrade"`).
+When a threshold is crossed, CLAUDE.md gets updated. Claude then **suggests** actions like:
+- At 80%: "You're at 82% of your session budget. Consider wrapping up."
+- At 100%: "Session budget exceeded. Consider switching to Sonnet with `/model sonnet`."
 
-### 3. Manual Commands — When You Need Them
+**Important:** The `ceilingAction` setting (`"warn"`, `"downgrade"`, `"pause"`) controls what text gets injected into CLAUDE.md — not what Claude actually does. Claude reads the suggestion but cannot change the model itself.
+
+### 3. Manual Commands — For When You Want More Control
 
 | Command | When to Use |
 |---------|------------|
-| `--prompt "your prompt"` | Before sending a prompt — get model recommendation + quality grade |
+| `--prompt "your prompt"` | Before a prompt — get model recommendation + quality grade, then manually pick the model |
 | `--budget` | Mid-session — see full budget dashboard with progress bars |
 | `--budget-check` | Used by hooks (silent, exit code 0/1) |
 | `--setup` | One-time — install hooks + create budget config |
@@ -195,10 +207,12 @@ This keeps the hook under 5ms for large session files.
 
 Each scope tracks alerts at 50%, 80%, and 90% of its ceiling. Alerts fire **exactly once** per threshold — the fired state is persisted in `~/.claude/tokenomics-alerts.json`.
 
-When 100% is reached, the `ceilingAction` executes:
-- `"warn"` — inject warning into CLAUDE.md
-- `"downgrade"` — inject "switch to Sonnet" instruction
-- `"pause"` — inject "ask user before continuing" instruction
+When 100% is reached, the `ceilingAction` controls what text gets injected into CLAUDE.md:
+- `"warn"` — injects a warning message. Claude sees it and suggests wrapping up.
+- `"downgrade"` — injects "switch to Sonnet" suggestion. Claude may suggest running `/model sonnet`.
+- `"pause"` — injects "ask user before continuing" instruction. Claude may ask for confirmation.
+
+**Note:** These are text instructions Claude reads as guidance. Tokenomics cannot force model changes — that requires the user running `/model` in Claude Code.
 
 ### Configuration
 
@@ -239,12 +253,9 @@ Budget config lives at `~/.claude/tokenomics.json`:
 
 ## What `--fix` Does
 
-1. **Set default model to Sonnet** — saves ~5x cost on simple sessions
-   - Edits: `~/.claude/settings.json`
-2. **Remove never-used MCP servers** — reduces overhead on every session
-   - Edits: `~/.claude.json`
-3. **Inject findings into CLAUDE.md** — behavioral coaching auto-applied
-   - Edits: `.claude/CLAUDE.md` (project) and `~/.claude/CLAUDE.md` (global)
+1. **Set default model to Sonnet** — edits `~/.claude/settings.json` to make Sonnet the default. This is a real settings change — Claude Code will use Sonnet by default on new sessions (you can still switch with `/model`).
+2. **Remove never-used MCP servers** — edits `~/.claude.json` to remove servers that haven't been used in any of your sessions. Reduces per-session overhead.
+3. **Inject findings into CLAUDE.md** — writes behavioral coaching into your CLAUDE.md (project and global). Claude reads and follows these as suggestions.
 
 ## Detectors
 
