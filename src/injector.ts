@@ -126,6 +126,16 @@ function detectorToInstruction(finding: DetectorResult): InstructionBlock | null
       };
     }
 
+    case 'smart-router': {
+      const simpleRate = Math.round((evidence.simpleSessionRate as number) ?? 0);
+      return {
+        category: 'model-routing',
+        instruction: `**${simpleRate}%** of your sessions are simple tasks. Default to **Sonnet** for routine work, switch to Opus only for complex reasoning tasks.`,
+        sourceDetector: 'smart-router',
+        confidence: finding.confidence,
+      };
+    }
+
     default:
       return null;
   }
@@ -157,8 +167,10 @@ export function renderInstructionBlock(instructions: InstructionBlock[]): string
 
   const categoryTitles: Record<string, string> = {
     'model-recommendation': '### Model Usage',
+    'model-routing': '### Model Routing',
     'behavioral-coaching': '### Context Management',
     'prompt-improvement': '### Prompt Quality',
+    'budget-status': '### Budget Status',
     'general': '### General',
   };
 

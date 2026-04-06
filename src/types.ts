@@ -382,7 +382,7 @@ export interface InjectionTarget {
 
 export interface InstructionBlock {
   /** Machine-readable category */
-  category: 'model-recommendation' | 'behavioral-coaching' | 'prompt-improvement' | 'general';
+  category: 'model-recommendation' | 'behavioral-coaching' | 'prompt-improvement' | 'general' | 'model-routing' | 'budget-status';
   /** Human-readable instruction for Claude */
   instruction: string;
   /** Source detector */
@@ -434,7 +434,7 @@ export interface AppliedChange {
 
 export interface HookConfig {
   /** Hook type in Claude Code settings */
-  type: 'SessionStart';
+  type: 'SessionStart' | 'PostToolUse';
   /** The command to run */
   command: string;
   /** Whether the hook is currently installed */
@@ -474,4 +474,195 @@ export interface CliOptions {
   setup: boolean;
   /** Suppress output (used by SessionStart hooks) */
   quiet: boolean;
+  /** Analyze a prompt: model recommendation + quality grade */
+  prompt: string | undefined;
+  /** Show budget dashboard */
+  budget: boolean;
+  /** Run lightweight budget check (for hooks) */
+  budgetCheck: boolean;
+  /** Suppress budget alerts (no CLAUDE.md injection) */
+  noAlerts: boolean;
+}
+
+// ============================================================================
+// Router Types (Smart Model Routing)
+// ============================================================================
+
+export interface PromptSignals {
+  /** Number of words in the prompt */
+  wordCount: number;
+  /** Whether simple keywords are present */
+  hasSimpleKeywords: boolean;
+  /** Whether complex keywords are present */
+  hasComplexKeywords: boolean;
+  /** Number of file references detected */
+  fileReferenceCount: number;
+  /** List of file references found */
+  fileReferences: string[];
+  /** Whether the prompt contains a URL */
+  hasUrlReference: boolean;
+  /** Whether the prompt contains a code block */
+  hasCodeBlock: boolean;
+}
+
+export interface RouteDecision {
+  /** Recommended model */
+  model: 'claude-haiku-4-20250514' | 'claude-sonnet-4-6' | 'claude-opus-4-6';
+  /** Confidence score (0-1) */
+  confidence: number;
+  /** Reason for the recommendation */
+  reason: string;
+  /** Estimated savings vs Opus (e.g., "~80% vs Opus") */
+  estimatedSavings: string;
+  /** Signals that led to the decision */
+  signals: PromptSignals;
+}
+
+export interface RouterEvidence {
+  /** Average tool uses per session */
+  avgToolCount: number;
+  /** Average file span (unique files accessed) */
+  avgFileSpan: number;
+  /** Percentage of sessions classified as simple */
+  simpleSessionRate: number;
+  /** Total sessions analyzed */
+  totalSessions: number;
+}
+
+// ============================================================================
+// Budget Types (Token Budget & Guardrails)
+// ============================================================================
+
+export type BudgetScope = 'session' | 'daily' | 'project';
+
+export interface BudgetConfig {
+  /** Session token ceiling */
+  sessionCeiling: number;
+  /** Daily token ceiling */
+  dailyCeiling: number;
+  /** Project token ceiling */
+  projectCeiling: number;
+  /** Alert thresholds (percentages) */
+  alertThresholds: number[];
+  /** Action when ceiling is reached: 'downgrade' | 'pause' | 'warn' */
+  ceilingAction: 'downgrade' | 'pause' | 'warn';
+  /** When true, suppress all budget alerts (no CLAUDE.md injection) */
+  muteAlerts?: boolean;
+}
+
+export interface BudgetState {
+  /** Scope being tracked */
+  scope: BudgetScope;
+  /** Current token usage */
+  used: number;
+  /** Ceiling for this scope */
+  ceiling: number;
+  /** Percentage used (0-100) */
+  percent: number;
+  /** Project name (if project scope) */
+  project?: string;
+}
+
+export interface AlertEvent {
+  /** Scope where alert fired */
+  scope: BudgetScope;
+  /** Threshold percentage that was crossed */
+  threshold: number;
+  /** Timestamp when alert fired */
+  timestamp: string;
+  /** Project (if project scope) */
+  project?: string;
+}
+
+export interface BudgetCheckResult {
+  /** States for all three scopes */
+  states: BudgetState[];
+  /** New alerts that fired in this check */
+  newAlerts: AlertEvent[];
+  /** Whether any ceiling was exceeded */
+  ceilingExceeded: boolean;
+  /** Which scope exceeded ceiling (if any) */
+  exceededScope?: BudgetScope;
+  /** Scopes where data came from cache (not fresh aggregation) */
+  cachedScopes?: Set<BudgetScope>;
+}
+
+/** Cached budget totals for daily/project scopes */
+export interface BudgetCache {
+  daily: {
+    tokens: number;
+    updatedAt: string;
+  };
+  project: {
+    tokens: number;
+    updatedAt: string;
+  };
+}
+
+/** Options for checkBudget */
+export interface CheckBudgetOptions {
+  config?: BudgetConfig;
+  claudeDir?: string;
+  /** When true, compute real daily/project totals instead of using cache */
+  forceRefresh?: boolean;
+}
+
+// ============================================================================
+// Auditor Types (Prompt Quality Auditor)
+// ============================================================================
+
+export type AuditSeverity = 'critical' | 'warning' | 'info';
+
+export type AuditGrade = 'A' | 'B' | 'C' | 'D';
+
+export interface AuditFinding {
+  /** Rule identifier */
+  ruleId: string;
+  /** Human-readable title */
+  title: string;
+  /** Severity level */
+  severity: AuditSeverity;
+  /** Finding description */
+  description: string;
+  /** Actionable suggestion */
+  suggestion: string;
+  /** Estimated tokens saved by addressing this */
+  estimatedSavings: number;
+}
+
+export interface AuditContext {
+  /** Optional file path for context */
+  filePath?: string;
+  /** Optional function name for context */
+  functionName?: string;
+  /** Maximum allowed code block lines */
+  maxCodeBlockLines?: number;
+  /** Maximum allowed stack trace frames */
+  maxStackTraceFrames?: number;
+}
+
+export interface AuditRule {
+  /** Rule identifier */
+  id: string;
+  /** Human-readable title */
+  title: string;
+  /** Severity level */
+  severity: AuditSeverity;
+  /** Check function */
+  check: (prompt: string) => AuditFinding | null;
+}
+
+export interface AuditReport {
+  /** Overall grade (A=B, C=warnings, D=critical) */
+  grade: AuditGrade;
+  /** All findings found */
+  findings: AuditFinding[];
+  /** Total estimated savings across all findings */
+  totalEstimatedSavings: number;
+  /** Number of findings by severity */
+  severityCounts: {
+    critical: number;
+    warning: number;
+    info: number;
+  };
 }

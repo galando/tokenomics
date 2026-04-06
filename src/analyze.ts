@@ -27,8 +27,13 @@ import { renderHtmlReport } from './report-html.js';
 import { injectFindings } from './injector.js';
 import { installHooks } from './hooks.js';
 import { optimizeSettings, applySettings } from './optimizer.js';
+import { extractSignals, routePrompt } from './router.js';
+import { checkBudget, renderBudgetDashboard, renderBudgetCheckOutput } from './budget.js';
+import { auditPrompt } from './auditor.js';
+import { renderPromptOutput } from './prompt-output.js';
+import { ensureBudgetConfig, readBudgetConfig } from './budget-config.js';
 
-const VERSION = '1.3.2';
+const VERSION = '2.0.0';
 
 // ─── CLI ──────────────────────────────────────────────────────────────────────
 
@@ -50,6 +55,10 @@ function parseCliArgs(): CliOptions {
       inject: { type: 'boolean', default: false },
       setup: { type: 'boolean', default: false },
       quiet: { type: 'boolean', default: false },
+      prompt: { type: 'string' },
+      budget: { type: 'boolean', default: false },
+      'budget-check': { type: 'boolean', default: false },
+      'no-alerts': { type: 'boolean', default: false },
     },
     strict: true,
   });
@@ -74,6 +83,10 @@ function parseCliArgs(): CliOptions {
     inject: values.inject,
     setup: values.setup,
     quiet: values.quiet,
+    prompt: values.prompt,
+    budget: values.budget,
+    budgetCheck: values['budget-check'],
+    noAlerts: values['no-alerts'],
   };
 }
 
@@ -111,6 +124,12 @@ INTEGRATION
   --inject             Run analysis + inject findings into CLAUDE.md
   --quiet              Suppress output (used by SessionStart hooks)
 
+PROMPT ANALYSIS
+  --prompt <text>      Analyze a prompt: model recommendation + quality grade
+  --budget             Show token budget dashboard
+  --budget-check       Lightweight budget check (for hooks)
+  --no-alerts          Suppress budget alerts (no CLAUDE.md injection)
+
 OTHER
   --verbose            Show discovery progress and debug info
   --help               Show this message
@@ -129,6 +148,9 @@ EXAMPLES
   tokenomics --fix --dry-run        Preview auto-fixes
   tokenomics --fix                  Apply fixes
   tokenomics --claude-dir ~/.claude-zai   Analyze specific installation
+  tokenomics --prompt "fix bug"     Analyze prompt (model + grade)
+  tokenomics --budget               Show budget dashboard
+  tokenomics --prompt "design a schema"  Check complex prompt
 `);
 }
 
@@ -472,6 +494,40 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  // --no-alerts only makes sense with --budget or --budget-check
+  if (options.noAlerts && !options.budget && !options.budgetCheck) {
+    console.error('Note: --no-alerts only works with --budget or --budget-check.');
+    console.error('Example: tokenomics --budget --no-alerts');
+    process.exit(1);
+  }
+
+  // ── Prompt analysis mode ──
+  if (options.prompt) {
+    const signals = extractSignals(options.prompt);
+    const decision = routePrompt(signals);
+    const report = auditPrompt(options.prompt);
+    console.log(renderPromptOutput(decision, report));
+    return;
+  }
+
+  // ── Budget mode (full dashboard with refresh) ──
+  if (options.budget) {
+    const config = await ensureBudgetConfig();
+    const budgetConfig = { ...config.config, ...(options.noAlerts && { muteAlerts: true }) };
+    const result = await checkBudget({ config: budgetConfig, forceRefresh: true });
+    console.log(renderBudgetDashboard(result.states, budgetConfig, result.cachedScopes));
+    return;
+  }
+
+  // ── Budget check mode (for hooks, uses cache) ──
+  if (options.budgetCheck) {
+    const config = await readBudgetConfig();
+    const budgetConfig = { ...config, ...(options.noAlerts && { muteAlerts: true }) };
+    const result = await checkBudget({ config: budgetConfig, forceRefresh: false });
+    console.log(renderBudgetCheckOutput(result));
+    process.exit(result.ceilingExceeded ? 1 : 0);
+  }
+
   // Discover JSONL files (auto-detects all ~/.claude* installations)
   const discoveryOpts: import('./types.js').DiscoveryOptions = {
     days: options.days,
@@ -515,6 +571,7 @@ async function main(): Promise<void> {
   if (options.setup) {
     const projectDir = process.cwd();
     const hookResult = await installHooks();
+    const budgetConfigResult = await ensureBudgetConfig();
     const injectResult = await injectFindings(findings, projectDir);
 
     if (!options.quiet) {
@@ -524,6 +581,7 @@ async function main(): Promise<void> {
       console.log('');
       console.log(`  Hook:      ${hookResult.installed ? 'Installed' : 'Already installed'}`);
       console.log(`  Settings:  ${hookResult.path}`);
+      console.log(`  Budget:    ${budgetConfigResult.created ? 'Created' : 'Exists'} (~/.claude/tokenomics.json)`);
       console.log(`  Injected:  ${injectResult.instructionCount} instructions into ${injectResult.targets.length} CLAUDE.md file(s)`);
       for (const target of injectResult.targets) {
         const status = target.existed ? 'Updated' : 'Created';
