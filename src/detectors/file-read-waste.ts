@@ -23,6 +23,8 @@ interface FileReadWasteEvidence {
     file: string;
     count: number;
     tokens: number;
+    startedAt: string;
+    firstPrompt: string;
   }>;
 }
 
@@ -62,6 +64,8 @@ export function detectFileReadWaste(sessions: SessionData[]): DetectorResult | n
     file: string;
     count: number;
     tokens: number;
+    startedAt: string;
+    firstPrompt: string;
   }> = [];
 
   for (const session of sessions) {
@@ -108,6 +112,8 @@ export function detectFileReadWaste(sessions: SessionData[]): DetectorResult | n
           file: path.split('/').pop() ?? path,
           count: info.count,
           tokens: Math.round(session.totalInputTokens / session.toolUses.length) * (info.count - 1),
+          startedAt: session.startedAt,
+          firstPrompt: session.messages.find((m) => m.role === 'user')?.content?.slice(0, 120) ?? '',
         });
       }
     }

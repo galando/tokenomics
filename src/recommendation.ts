@@ -18,6 +18,33 @@ function fmt(n: number): string {
   return String(n);
 }
 
+/**
+ * Format an ISO timestamp into a human-readable date + time.
+ * "2026-03-24T14:30:15Z" → "Mar 24 at 14:30"
+ * Falls back to just the date if time info is missing.
+ */
+function fmtWhen(iso: string | undefined): string {
+  if (!iso) return 'unknown date';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const mon = months[d.getMonth()] ?? '?';
+  const day = d.getDate();
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  return `${mon} ${day} at ${h}:${m}`;
+}
+
+/**
+ * Truncate a prompt to fit in one line, showing enough to be recognizable.
+ */
+function fmtPrompt(prompt: string | undefined, maxLen = 80): string {
+  if (!prompt) return '';
+  const cleaned = prompt.replace(/\n/g, ' ').trim();
+  if (cleaned.length <= maxLen) return cleaned;
+  return cleaned.slice(0, maxLen - 1) + '...';
+}
+
 // ─── Evidence extraction (per detector) ──────────────────────────────────────
 
 interface ExtractedParts {
@@ -34,12 +61,19 @@ function extractContextSnowball(result: DetectorResult): ExtractedParts {
   const total = ev?.totalSessions ?? '?';
   const rate = ev?.snowballRate ?? '?';
   const headline = `Your context window ballooned without /compact in ${count} of ${total} sessions (${rate}%).`;
-  const evidenceText = worst
-    ? `Worst case: "${worst.slug}" in ${worst.project} (${worst.date}) — context grew ${worst.growthMultiplier}x from turn ${worst.inflectionTurn}, wasting ${fmt(worst.excessTokens)} tokens.`
-    : `Across ${count} affected sessions, context expanded beyond 2.5x its starting size.`;
+
+  let evidenceText: string;
+  if (worst) {
+    const when = fmtWhen(worst.startedAt || worst.date);
+    const prompt = fmtPrompt(worst.firstPrompt);
+    evidenceText = `Worst: ${worst.project} on ${when} — context grew ${worst.growthMultiplier}x from turn ${worst.inflectionTurn}, wasting ${fmt(worst.excessTokens)} tokens.`;
+    if (prompt) evidenceText += ` You were working on: "${prompt}"`;
+  } else {
+    evidenceText = `Across ${count} affected sessions, context expanded beyond 2.5x its starting size.`;
+  }
+
   const consequence = `Every turn in a snowballed session re-sends the entire conversation history, compounding token cost.`;
   const action = `Run /compact after finishing a logical unit of work. When switching tasks entirely, run /clear to start fresh.`;
-
   return { headline, evidence: evidenceText, consequence, action };
 }
 
@@ -50,12 +84,19 @@ function extractModelSelection(result: DetectorResult): ExtractedParts {
   const rate = ev?.overkillRate ?? '?';
 
   const headline = `You used Opus for ${count} sessions (${rate}%) where Sonnet would have produced the same result.`;
-  const evidenceText = worst
-    ? `Example: "${worst.slug}" in ${worst.project} (${worst.date}) — ${worst.toolCount} tool uses, ${worst.complexity} complexity. ${worst.suggestedModel} was sufficient.`
-    : `These sessions had simple tasks with few tool uses that don't require Opus-level reasoning.`;
-  const consequence = `Opus processes ~5x more tokens per task than Sonnet for identical work on simple tasks.`;
-  const action = `Set Sonnet as your default: run tokenomics --fix. Switch to Opus mid-session only for complex architectural reasoning.`;
 
+  let evidenceText: string;
+  if (worst) {
+    const when = fmtWhen(worst.startedAt || worst.date);
+    const prompt = fmtPrompt(worst.firstPrompt);
+    evidenceText = `Example: ${worst.project} on ${when} — ${worst.toolCount} tool uses, ${worst.complexity} complexity. ${worst.suggestedModel.replace('claude-', '')} was sufficient.`;
+    if (prompt) evidenceText += ` Task: "${prompt}"`;
+  } else {
+    evidenceText = `These sessions had simple tasks with few tool uses that don't require Opus-level reasoning.`;
+  }
+
+  const consequence = `Opus processes ~5x more tokens per task than Sonnet for identical work on simple tasks.`;
+  const action = `Run /model sonnet at the start of simple sessions. Switch to Opus only for architecture, complex debugging, or multi-file refactors.`;
   return { headline, evidence: evidenceText, consequence, action };
 }
 
@@ -66,12 +107,19 @@ function extractFileReadWaste(result: DetectorResult): ExtractedParts {
   const sessions = ev?.sessionsWithWaste ?? '?';
 
   const headline = `Claude re-read the same files ${dupes} times across ${sessions} sessions without any changes.`;
-  const evidenceText = worst
-    ? `Worst offender: ${worst.file} in ${worst.project} (session "${worst.slug}") — read ${worst.count}x, wasting ~${fmt(worst.tokens)} tokens.`
-    : `Duplicate file reads inject the same content into context repeatedly for zero new information.`;
+
+  let evidenceText: string;
+  if (worst) {
+    const when = fmtWhen(worst.startedAt);
+    evidenceText = `Worst offender: ${worst.file} in ${worst.project} (on ${when}) — read ${worst.count}x, wasting ~${fmt(worst.tokens)} tokens.`;
+    const prompt = fmtPrompt(worst.firstPrompt);
+    if (prompt) evidenceText += ` Session task: "${prompt}"`;
+  } else {
+    evidenceText = `Duplicate file reads inject the same content into context repeatedly for zero new information.`;
+  }
+
   const consequence = `Each duplicate read adds 500-5,000 tokens to your context and raises the floor for all subsequent turns.`;
   const action = `Reference files by name ("in the auth.ts you already read") instead of asking Claude to re-read them.`;
-
   return { headline, evidence: evidenceText, consequence, action };
 }
 
@@ -82,12 +130,19 @@ function extractBashOutputBloat(result: DetectorResult): ExtractedParts {
   const rate = ev?.bloatRate ?? '?';
 
   const headline = `${sessions} sessions (${rate}%) ran bash commands that dumped excessive output into context.`;
-  const evidenceText = worst
-    ? `Example: \`${worst.command}\` in ${worst.project} (session "${worst.slug}") — category: ${worst.category}.`
-    : `Commands like git log, find, and npm list produced thousands of lines of output that entered context permanently.`;
+
+  let evidenceText: string;
+  if (worst) {
+    const when = fmtWhen(worst.startedAt);
+    evidenceText = `Example: \`${worst.command}\` in ${worst.project} on ${when} — ${worst.category}.`;
+    const prompt = fmtPrompt(worst.firstPrompt);
+    if (prompt) evidenceText += ` You were working on: "${prompt}"`;
+  } else {
+    evidenceText = `Commands like git log, find, and npm list produced thousands of lines of output that entered context permanently.`;
+  }
+
   const consequence = `Bash output stays in the conversation for the entire session — one bad command can inject more tokens than 20 file reads.`;
   const action = `Add limits: git log -n 10 --oneline, find . | head -20. Pipe through grep or head to filter before it enters context.`;
-
   return { headline, evidence: evidenceText, consequence, action };
 }
 
@@ -99,12 +154,17 @@ function extractVaguePrompts(result: DetectorResult): ExtractedParts {
   const clarifications = ev?.clarificationRounds ?? 0;
 
   const headline = `${count} sessions (${rate}%) started with prompts too vague for Claude to act on directly.`;
-  const evidenceText = worst
-    ? `Example: "${worst.prompt.slice(0, 80)}${worst.prompt.length > 80 ? '...' : ''}" in ${worst.project} (${worst.slug}) — ${worst.wordCount} words. Reason: ${worst.vagueReason}.`
-    : `Vague prompts force Claude into exploration loops — reading files and asking questions before doing real work.`;
-  const consequence = `Vague prompts trigger ${clarifications} clarification rounds total, each adding turns and context before any productive work begins.`;
-  const action = `Add one file path and one function name to your next prompt. "Fix the JWT bug in src/auth.ts, validateToken()" instead of "fix login".`;
 
+  let evidenceText: string;
+  if (worst) {
+    const prompt = fmtPrompt(worst.prompt, 100);
+    evidenceText = `Example: "${prompt}" in ${worst.project} — ${worst.wordCount} words, flagged as: ${worst.vagueReason}.`;
+  } else {
+    evidenceText = `Vague prompts force Claude into exploration loops — reading files and asking questions before doing real work.`;
+  }
+
+  const consequence = `Vague prompts trigger ${clarifications} clarification rounds total, each adding turns and context before any productive work begins.`;
+  const action = `Include the file path and what you want changed: "Fix the null check in src/auth.ts line 45" instead of "fix the bug".`;
   return { headline, evidence: evidenceText, consequence, action };
 }
 
@@ -122,7 +182,6 @@ function extractSessionTiming(result: DetectorResult): ExtractedParts {
   const evidenceText = `Peak hours: ${peakStr || 'unknown'} UTC. Late-night sessions (10PM-6AM): ${lateNight} of ${total}. High-intensity windows: ${highIntensity} hours with >20% of sessions.`;
   const consequence = `Long sessions compound context — a 60-minute session often uses 3-4x more tokens per useful output than a 20-minute one.`;
   const action = `Keep sessions under 30 minutes. When context grows past 50%, run /compact. Stagger sessions across hours to avoid rate limits.`;
-
   return { headline, evidence: evidenceText, consequence, action };
 }
 
@@ -134,12 +193,19 @@ function extractSubagentOpportunity(result: DetectorResult): ExtractedParts {
   const avgChain = ev?.avgChainLength ?? '?';
 
   const headline = `${count} sessions (${rate}%) included long chains of file reads (${avgChain} reads average) that polluted main context.`;
-  const evidenceText = worst
-    ? `Worst case: "${worst.slug}" in ${worst.project} (${worst.date}) — ${worst.chainLength} consecutive reads across ${worst.filesExplored} files.`
-    : `Long exploration chains add file contents to your main context permanently.`;
+
+  let evidenceText: string;
+  if (worst) {
+    const when = fmtWhen(worst.startedAt || worst.date);
+    evidenceText = `Worst: ${worst.project} on ${when} — ${worst.chainLength} consecutive reads across ${worst.filesExplored} files.`;
+    const prompt = fmtPrompt(worst.firstPrompt);
+    if (prompt) evidenceText += ` Task: "${prompt}"`;
+  } else {
+    evidenceText = `Long exploration chains add file contents to your main context permanently.`;
+  }
+
   const consequence = `Every file read in the chain stays in context for the entire session, compounding token cost on every subsequent turn.`;
   const action = `Prefix exploration requests with "Use a subagent to explore..." — reads happen in isolation and only the summary enters your main context.`;
-
   return { headline, evidence: evidenceText, consequence, action };
 }
 
@@ -154,7 +220,6 @@ function extractClaudeMdOverhead(result: DetectorResult): ExtractedParts {
     : `Large CLAUDE.md files inject thousands of tokens into every API call, even when the content is irrelevant.`;
   const consequence = `CLAUDE.md content is part of the system prompt — every token in it is charged on every single turn of every conversation.`;
   const action = `Trim CLAUDE.md to under 1,000 tokens. Remove config duplication and move procedures to on-demand instruction files. Run tokenomics --fix to review.`;
-
   return { headline, evidence: evidenceText, consequence, action };
 }
 
@@ -175,7 +240,6 @@ function extractMcpToolTax(result: DetectorResult): ExtractedParts {
     : `Every loaded server injects tool definitions into each API request, whether or not those tools are called.`;
   const consequence = `Each MCP server adds 100-500 tokens of overhead on every turn — a fixed per-turn tax across all sessions.`;
   const action = `Remove never-used servers from your Claude config. Move rarely-used ones to project-level config. Run tokenomics --fix to auto-remove unused servers.`;
-
   return { headline, evidence: evidenceText, consequence, action };
 }
 

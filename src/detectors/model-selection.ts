@@ -24,6 +24,8 @@ interface ModelSelectionEvidence {
     slug: string;
     project: string;
     date: string;
+    startedAt: string;
+    firstPrompt: string;
     model: string;
     toolCount: number;
     suggestedModel: string;
@@ -162,6 +164,8 @@ export function detectModelSelection(sessions: SessionData[]): DetectorResult | 
         slug: session.slug,
         project: session.project,
         date: session.startedAt.split('T')[0] ?? '',
+        startedAt: session.startedAt,
+        firstPrompt: session.messages.find((m) => m.role === 'user')?.content?.slice(0, 120) ?? '',
         model: session.model,
         toolCount: session.toolUses.length,
         suggestedModel: complexity.suggestedModel,

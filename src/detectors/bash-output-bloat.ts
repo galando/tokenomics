@@ -26,6 +26,8 @@ interface BashOutputBloatEvidence {
     project: string;
     command: string;
     category: string;
+    startedAt: string;
+    firstPrompt: string;
   }>;
 }
 
@@ -88,6 +90,8 @@ export function detectBashOutputBloat(sessions: SessionData[]): DetectorResult |
     project: string;
     command: string;
     category: string;
+    startedAt: string;
+    firstPrompt: string;
   }> = [];
 
   let sessionsWithBloat = 0;
@@ -115,6 +119,8 @@ export function detectBashOutputBloat(sessions: SessionData[]): DetectorResult |
               project: session.project,
               command: command.slice(0, 100),
               category: match.category,
+              startedAt: session.startedAt,
+              firstPrompt: session.messages.find((m) => m.role === 'user')?.content?.slice(0, 120) ?? '',
             });
           }
         }

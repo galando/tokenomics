@@ -18,6 +18,8 @@ interface SubagentEvidence {
     chainLength: number;
     filesExplored: number;
     date: string;
+    startedAt: string;
+    firstPrompt: string;
   }>;
 }
 
@@ -78,6 +80,8 @@ export function detectSubagentOpportunity(sessions: SessionData[]): DetectorResu
       chainLength: o.chainLength,
       filesExplored: o.filesExplored,
       date: o.session.startedAt.split('T')[0] ?? '',
+      startedAt: o.session.startedAt,
+      firstPrompt: o.session.messages.find((m) => m.role === 'user')?.content?.slice(0, 120) ?? '',
     }));
 
   const totalTokens = sessions.reduce(
