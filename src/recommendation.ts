@@ -34,21 +34,51 @@ function fmtWhen(iso: string | undefined): string {
   return `${mon} ${day} at ${h}:${m}`;
 }
 
-/** Strip XML tags like <command-message>, <command-name>, etc. for clean display. */
-function stripXml(text: string): string {
-  return text
-    .replace(/<\/?\w+[^>]*>/g, '')   // remove all XML/HTML tags
-    .replace(/\s{2,}/g, ' ')         // collapse multiple spaces
+/**
+ * Clean raw prompt text for display. Handles Claude Code's XML-wrapped
+ * slash commands by extracting only the user-visible args.
+ *
+ * Raw:  "<command-message>temper:plan</command-message>\n<command-name>/temper:plan</command-name>\n<command-args>fix the bug</command-args>"
+ * Clean: "/temper:plan fix the bug"
+ *
+ * Also strips task-notification, system-reminder, and other non-user blocks.
+ */
+function cleanPrompt(text: string): string {
+  let cleaned = text;
+
+  // If this is a slash command, extract the command name + args
+  const nameMatch = cleaned.match(/<command-name>([^<]+)<\/command-name>/);
+  // Try to match full command-args tag first, then handle truncated (no closing tag)
+  let argsMatch = cleaned.match(/<command-args>([^]*?)<\/command-args>/);
+  if (!argsMatch && cleaned.includes('<command-args>')) {
+    // Tag was truncated — extract everything after <command-args>
+    argsMatch = cleaned.match(/<command-args>([^]+)/);
+  }
+
+  if (nameMatch && argsMatch) {
+    const name = nameMatch[1]?.trim() ?? '';
+    const args = argsMatch[1]?.trim() ?? '';
+    cleaned = args ? `${name} ${args}` : name;
+  }
+
+  // Remove other XML blocks entirely (task notifications, system reminders, etc.)
+  cleaned = cleaned
+    .replace(/<task-notification>[^]*?<\/task-notification>/g, '')
+    .replace(/<system-reminder>[^]*?<\/system-reminder>/g, '')
+    .replace(/<[^>]+>/g, '')           // strip any remaining tags
+    .replace(/\s{2,}/g, ' ')           // collapse whitespace
     .trim();
+
+  return cleaned;
 }
 
 /**
- * Clean and truncate a prompt for display. Strips XML tags, newlines,
- * and truncates to maxLen chars. Returns empty string if no content.
+ * Clean and truncate a prompt for display. Strips XML wrappers, newlines,
+ * and truncates to maxLen chars at a word boundary.
  */
 function fmtPrompt(prompt: string | undefined, maxLen = 200): string {
   if (!prompt) return '';
-  const cleaned = stripXml(prompt.replace(/\n/g, ' '));
+  const cleaned = cleanPrompt(prompt.replace(/\n/g, ' '));
   if (cleaned.length <= maxLen) return cleaned;
   // Break at last space before maxLen to avoid cutting mid-word
   const truncated = cleaned.slice(0, maxLen);
@@ -79,18 +109,18 @@ function extractContextSnowball(result: DetectorResult): ExtractedParts {
   if (worst) {
     const when = fmtWhen(worst.startedAt || worst.date);
     const prompt = fmtPrompt(worst.firstPrompt);
-    evidenceText = `Worst: ${worst.project} on ${when} — context grew ${worst.growthMultiplier}x from turn ${worst.inflectionTurn}, wasting ${fmt(worst.excessTokens)} tokens.`;
+    evidenceText = `Worst: ${worst.project} on ${when} — context grew ${worst.growthMultiplier}x by message ${worst.inflectionTurn}, wasting ${fmt(worst.excessTokens)} tokens.`;
     if (prompt) evidenceText += `\n  You were working on: "${prompt}"`;
   } else {
     evidenceText = `Across ${count} affected sessions, context expanded beyond 2.5x its starting size.`;
   }
 
-  const consequence = `Every turn in a snowballed session re-sends the entire conversation history, compounding token cost.`;
+  const consequence = `Every message in a snowballed session re-sends the entire conversation history, compounding token cost.`;
 
   const turnHint = typeof avgTurn === 'number' ? Math.max(1, Math.round(avgTurn) - 2) : 10;
   const action = worst
-    ? `In ${worst.project}, your context typically snowballs around turn ${worst.inflectionTurn}. Run /compact around turn ${turnHint} — before it grows, not after. When switching to a different task, run /clear instead.`
-    : `Run /compact around turn ${turnHint} — before context grows, not after. When switching tasks, run /clear to start fresh.`;
+    ? `In ${worst.project}, your context typically snowballs around message ${worst.inflectionTurn}. Run /compact around message ${turnHint} — before it grows, not after. When switching to a different task, run /clear instead.`
+    : `Run /compact around message ${turnHint} — before context grows, not after. When switching tasks, run /clear to start fresh.`;
 
   return { headline, evidence: evidenceText, consequence, action };
 }
@@ -144,7 +174,7 @@ function extractFileReadWaste(result: DetectorResult): ExtractedParts {
     evidenceText = `Duplicate file reads inject the same content into context repeatedly for zero new information.`;
   }
 
-  const consequence = `Each duplicate read adds 500-5,000 tokens to your context and raises the floor for all subsequent turns.`;
+  const consequence = `Each duplicate read adds 500-5,000 tokens to your context and raises the floor for all subsequent messages.`;
 
   const action = worst
     ? `In ${worst.project}, ${worst.file} was re-read ${worst.count} times. After Claude reads a file, say "in the ${worst.file} you already read" instead of asking it to re-read. For ${second ? `${second.file} too` : 'other frequently-read files'} — paste the relevant snippet into your message instead of triggering another full read.`
@@ -197,10 +227,10 @@ function extractVaguePrompts(result: DetectorResult): ExtractedParts {
     evidenceText = `Vague prompts force Claude into exploration loops — reading files and asking questions before doing real work.`;
   }
 
-  const consequence = `Vague prompts trigger ${clarifications} clarification rounds total, each adding turns and context before any productive work begins.`;
+  const consequence = `Vague prompts trigger ${clarifications} clarification rounds total, each adding extra messages and context before any productive work begins.`;
 
   const action = worst
-    ? `Rewrite "${worst.prompt.slice(0, 40).replace(/\n/g, ' ')}..." by adding the file path and function name. For example: "Fix the ${worst.vagueReason.includes('verb') ? worst.vagueReason.match(/fix|update|change/i)?.[0] ?? 'issue' : 'issue'} in src/[relevant-file].ts" — this lets Claude act on the first turn instead of asking questions.`
+    ? `Rewrite "${worst.prompt.slice(0, 40).replace(/\n/g, ' ')}..." by adding the file path and function name. For example: "Fix the ${worst.vagueReason.includes('verb') ? worst.vagueReason.match(/fix|update|change/i)?.[0] ?? 'issue' : 'issue'} in src/[relevant-file].ts" — this lets Claude act on the first message instead of asking questions.`
     : `Include the file path and what you want changed: "Fix the null check in src/auth.ts line 45" instead of "fix the bug".`;
 
   return { headline, evidence: evidenceText, consequence, action };
@@ -245,7 +275,7 @@ function extractSubagentOpportunity(result: DetectorResult): ExtractedParts {
     evidenceText = `Long exploration chains add file contents to your main context permanently.`;
   }
 
-  const consequence = `Every file read stays in context for the rest of the session, compounding token cost on every subsequent turn.`;
+  const consequence = `Every file read stays in context for the rest of the session, compounding token cost on every subsequent message.`;
 
   const action = worst
     ? `That ${worst.chainLength}-file exploration in ${worst.project} could have been a single subagent call. Next time you need Claude to explore multiple files, say: "Use a subagent to find all files related to [topic] and summarize the relevant code." The subagent reads files in isolation — only the summary enters your context.`
@@ -259,13 +289,13 @@ function extractClaudeMdOverhead(result: DetectorResult): ExtractedParts {
   const worst = ev?.worstOffenders?.[0];
   const projectCount = ev?.projectsWithIssues ?? '?';
 
-  const headline = `${projectCount} project(s) have oversized CLAUDE.md files that add overhead to every conversation turn.`;
+  const headline = `${projectCount} project(s) have oversized CLAUDE.md files that add overhead to every message.`;
 
   const evidenceText = worst
     ? `Heaviest: ${worst.project} at ${worst.tokenCount.toLocaleString()} tokens (~${Math.round(worst.sizeBytes / 1024)}KB), ${worst.sessionsAffected} sessions affected. Issues: ${worst.issues.slice(0, 2).join(', ') || 'oversized'}.`
     : `Large CLAUDE.md files inject thousands of tokens into every API call, even when the content is irrelevant.`;
 
-  const consequence = `CLAUDE.md content is part of the system prompt — every token in it is charged on every single turn of every conversation.`;
+  const consequence = `CLAUDE.md content is part of the system prompt — every token in it is charged on every single message of every conversation.`;
 
   const action = worst
     ? `${worst.project}/CLAUDE.md is ${worst.tokenCount.toLocaleString()} tokens — ${Math.round(worst.tokenCount / 1000)}x the recommended 1K token budget. ${worst.issues.length > 0 ? `Specific issues: ${worst.issues.slice(0, 2).join(', ')}.` : ''} Run tokenomics --fix to review and trim it automatically.`
@@ -291,7 +321,7 @@ function extractMcpToolTax(result: DetectorResult): ExtractedParts {
     ? `Example: "${worst.name}" — used in ${worst.sessionsUsed}/${worst.totalSessions} sessions (${worst.usageRate}%). ${neverUsed.length > 0 ? `Never used: ${neverList}.` : ''}`
     : `Every loaded server injects tool definitions into each API request, whether or not those tools are called.`;
 
-  const consequence = `Each MCP server adds 100-500 tokens of overhead on every turn — a fixed per-turn tax across all sessions.`;
+  const consequence = `Each MCP server adds 100-500 tokens of overhead on every message — a fixed tax across all sessions.`;
 
   const action = neverUsed.length > 0
     ? `${neverList} ${neverUsed.length === 1 ? 'was' : 'were'} loaded in every session but never called. Remove ${neverUsed.length === 1 ? 'it' : 'them'} from your ~/.claude/settings.json under mcpServers. Keep servers you use daily; enable rarely-used ones per-project only.`
