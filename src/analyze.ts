@@ -21,6 +21,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { AnalysisOutput, CliOptions, DetectorResult, SessionData } from './types.js';
 import { discoverFiles, logDiscoverySummary } from './discovery.js';
+import { extractHumanReadableBlock, renderTerminalBlock } from './recommendation.js';
 import { parseSessionFiles } from './parser.js';
 import { runAllDetectors, runAsyncDetectors } from './detectors/registry.js';
 import { renderHtmlReport } from './report-html.js';
@@ -33,7 +34,7 @@ import { auditPrompt } from './auditor.js';
 import { renderPromptOutput } from './prompt-output.js';
 import { ensureBudgetConfig, readBudgetConfig } from './budget-config.js';
 
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 
 // ─── CLI ──────────────────────────────────────────────────────────────────────
 
@@ -339,12 +340,6 @@ function fmt(n: number): string {
   return String(n);
 }
 
-function severityIcon(s: string): string {
-  if (s === 'high') return '\x1b[31m●\x1b[0m';   // red
-  if (s === 'medium') return '\x1b[33m●\x1b[0m';  // yellow
-  return '\x1b[34m●\x1b[0m';                       // blue
-}
-
 function renderTerminalSummary(output: AnalysisOutput): void {
   const { metadata, findings } = output;
   const days = Math.round(
@@ -374,23 +369,16 @@ function renderTerminalSummary(output: AnalysisOutput): void {
     return;
   }
 
-  // Findings table
+  // Findings as human-readable blocks
   const totalSavings = findings.reduce((s, f) => s + f.savingsPercent, 0);
   console.log('\x1b[1m  Findings:\x1b[0m');
-  console.log('  ┌─────────────────────────┬──────────┬────────────┬────────────┐');
-  console.log('  │ Detector                │ Severity │ Savings    │ Confidence │');
-  console.log('  ├─────────────────────────┼──────────┼────────────┼────────────┤');
 
   for (const f of findings) {
-    const sev = severityIcon(f.severity) + ' ' + f.severity.toUpperCase().padEnd(6);
-    const title = f.title.padEnd(23).slice(0, 23);
-    const savings = `~${f.savingsPercent}%`.padEnd(10);
-    const conf = `${Math.round(f.confidence * 100)}%`.padEnd(10);
-    console.log(`  │ ${title} │ ${sev} │ ${savings} │ ${conf} │`);
+    const block = extractHumanReadableBlock(f);
+    console.log(renderTerminalBlock(block, f.severity));
   }
 
-  console.log('  └─────────────────────────┴──────────┴────────────┴────────────┘');
-  console.log(`\n  \x1b[32mCombined potential: ~${totalSavings}% token reduction\x1b[0m`);
+  console.log(`  \x1b[32mCombined potential: ~${totalSavings}% token reduction\x1b[0m`);
 
   // Top 3 quick wins
   const top3 = findings.slice(0, 3);

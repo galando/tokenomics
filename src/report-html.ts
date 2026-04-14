@@ -14,7 +14,8 @@
  * No npm dependencies. No React. No external CDN. Single self-contained HTML output.
  */
 
-import type { AnalysisOutput, DetectorResult, Remediation, Severity } from './types.js';
+import type { AnalysisOutput, DetectorResult, Severity } from './types.js';
+import { extractHumanReadableBlock, renderHtmlBlock } from './recommendation.js';
 
 // ============================================================================
 // Utility Functions (copied verbatim from report-html.ts)
@@ -37,20 +38,6 @@ function escapeHtml(str: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
-}
-
-function markdownToHtml(md: string): string {
-  const escaped = escapeHtml(md);
-  return escaped
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/^#### (.+)$/gm, '<h4>$1</h4>')
-    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^  - (.+)$/gm, '<li>$1</li>')
-    .replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>')
-    .replace(/<\/ul>\s*<ul>/g, '')
-    .replace(/\n{2,}/g, '<br/><br/>')
-    .replace(/\n/g, '<br/>');
 }
 
 function severityConfig(s: Severity): { label: string; color: string; glow: string; explanation: string } {
@@ -326,112 +313,14 @@ function renderDashboard(metadata: AnalysisOutput['metadata'], findings: Detecto
 </details>`;
 }
 
-function renderRemediationSteps(steps: Remediation['steps']): string {
-  return steps.map((step, i) => `<div class="step" style="animation-delay:${i * 100}ms">
-  <div class="step-num">${String(i + 1).padStart(2, '0')}</div>
-  <div class="step-content">
-    <div class="step-action">${escapeHtml(step.action)}</div>
-    <div class="step-meta">
-      <div class="step-how">
-        <span class="step-badge step-badge--how">HOW</span>
-        <span class="step-text">${escapeHtml(step.howTo)}</span>
-      </div>
-      <div class="step-impact">
-        <span class="step-badge step-badge--impact">IMPACT</span>
-        <span class="step-text">${escapeHtml(step.impact)}</span>
-      </div>
-    </div>
-  </div>
-</div>`).join('\n');
-}
-
-function renderBeforeAfter(examples: Remediation['examples']): string {
-  if (examples.length === 0) return '';
-  const items = examples.map(ex => `<div class="example-pair">
-  <div class="example-side example-bad">
-    <div class="example-tag">
-      <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm3.5 9.5l-1 1L8 9l-2.5 2.5-1-1L7 8 4.5 5.5l1-1L8 7l2.5-2.5 1 1L9 8l2.5 2.5z"/></svg>
-      BEFORE
-    </div>
-    <code>${escapeHtml(ex.before)}</code>
-  </div>
-  <div class="example-side example-good">
-    <div class="example-tag">
-      <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm3.78 5.28l-4.5 4.5a.75.75 0 01-1.06 0l-2-2a.75.75 0 011.06-1.06L6.75 9.94l3.97-3.97a.75.75 0 111.06 1.06z"/></svg>
-      AFTER
-    </div>
-    <code>${escapeHtml(ex.after)}</code>
-  </div>
-</div>`).join('\n');
-
-  return `<div class="examples-section">${items}</div>`;
-}
-
 function renderUnifiedFindings(findings: DetectorResult[]): string {
   if (findings.length === 0) {
     return '<section class="findings-unified" id="findings"><div class="panel"><div class="panel-body no-findings">NO SIGNIFICANT PATTERNS DETECTED</div></div></section>';
   }
 
-  const findingRows = findings.map((f, i) => {
-    const sev = severityConfig(f.severity);
-    const problemSummary = f.remediation.problem.length > 100
-      ? f.remediation.problem.slice(0, 97).replace(/\s+\S*$/, '') + '...'
-      : f.remediation.problem;
-    const effortLabel = f.remediation.effort === 'quick' ? '< 5 MIN' : f.remediation.effort === 'moderate' ? '5-30 MIN' : '30+ MIN';
-    const detectorDesc = DETECTOR_DESCRIPTIONS[f.detector] ?? '';
-
-    return `<details class="finding-unified-row" id="finding-${f.detector}" data-severity="${f.severity}" data-detector="${f.detector}" data-sort-savings="${f.savingsPercent}" data-sort-confidence="${f.confidence}" data-sort-name="${escapeHtml(f.title)}">
-  <summary class="finding-summary" style="animation-delay:${i * 60}ms">
-    <div class="finding-col finding-col--sev">
-      <span class="sev-indicator" style="background:${sev.color};box-shadow:0 0 8px ${sev.glow}"></span>
-      <span class="sev-text" style="color:${sev.color}" data-tooltip="${escapeHtml(sev.explanation)}">${sev.label} <span class="bar-info">&#9432;</span></span>
-    </div>
-    <div class="finding-col finding-col--name">${escapeHtml(f.title)}</div>
-    <div class="finding-col finding-col--savings">
-      <span class="savings-pct" style="color:${sev.color}">~${f.savingsPercent}%</span>
-      <span class="savings-detail">${fmt(f.savingsTokens)} tokens</span>
-    </div>
-    <div class="finding-col finding-col--conf">
-      <div class="conf-bar"><div class="conf-fill" style="width:${Math.round(f.confidence * 100)}%;background:${sev.color}"></div></div>
-      <span class="conf-text">${Math.round(f.confidence * 100)}%</span>
-    </div>
-    <div class="finding-col finding-col--summary">${escapeHtml(problemSummary)}</div>
-    <div class="finding-col finding-col--chevron">
-      <svg viewBox="0 0 24 24" class="chevron-icon" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
-    </div>
-  </summary>
-  <div class="finding-expanded">
-    <div class="finding-detail-grid">
-      <div class="finding-section finding-meaning-card">
-        <div class="section-tag"><span class="section-hash">#</span>WHAT IT MEANS</div>
-        <div class="section-content">
-          <p class="meaning-problem">${escapeHtml(f.remediation.problem)}</p>
-          ${detectorDesc ? `<p class="meaning-context">${escapeHtml(detectorDesc)}</p>` : ''}
-        </div>
-      </div>
-      <div class="finding-section">
-        <div class="section-tag"><span class="section-hash">#</span>COST IMPACT</div>
-        <div class="section-content"><p>${escapeHtml(f.remediation.whyItMatters)}</p></div>
-      </div>
-    </div>
-    <div class="finding-section">
-      <div class="section-tag"><span class="section-hash">#</span>HOW TO FIX</div>
-      <div class="section-content">${renderRemediationSteps(f.remediation.steps)}</div>
-    </div>
-    <div class="finding-section">
-      <div class="section-tag"><span class="section-hash">#</span>EVIDENCE</div>
-      <div class="section-content">${markdownToHtml(f.sessionBreakdown)}</div>
-    </div>
-    ${renderBeforeAfter(f.remediation.examples)}
-    <div class="quickwin-strip" style="border-color:${sev.color}40">
-      <div class="quickwin-tag" style="background:${sev.color}18;color:${sev.color}">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-        QUICK WIN // ${effortLabel}
-      </div>
-      <div class="quickwin-text">${markdownToHtml(f.remediation.specificQuickWin)}</div>
-    </div>
-  </div>
-</details>`;
+  const findingCards = findings.map((f) => {
+    const block = extractHumanReadableBlock(f);
+    return renderHtmlBlock(block, f.severity);
   }).join('\n');
 
   const uniqueDetectors = [...new Set(findings.map(f => f.detector))].sort();
@@ -476,16 +365,8 @@ function renderUnifiedFindings(findings: DetectorResult[]): string {
     </div>
     <div class="panel-body panel-body--flush">
       ${toolbar}
-      <div class="findings-thead">
-        <span class="findings-th findings-th--sev" data-sort-key="severity" tabindex="0" role="button" aria-label="Sort by severity">SEVERITY</span>
-        <span class="findings-th findings-th--name" data-sort-key="name" tabindex="0" role="button" aria-label="Sort by detector">DETECTOR</span>
-        <span class="findings-th findings-th--savings" data-sort-key="savings" tabindex="0" role="button" aria-label="Sort by savings">SAVINGS</span>
-        <span class="findings-th findings-th--conf" data-sort-key="confidence" data-tooltip="How certain the detector is that this pattern is real, based on how many sessions show it and how consistently" tabindex="0" role="button" aria-label="Sort by confidence">CONFIDENCE</span>
-        <span class="findings-th findings-th--summary" data-sort-key="summary" tabindex="0" role="button" aria-label="Sort by problem description">PROBLEM</span>
-        <span class="findings-th findings-th--chevron"></span>
-      </div>
-      <div class="findings-tbody">
-      ${findingRows}
+      <div class="findings-cards">
+      ${findingCards}
       <div class="empty-state" style="display:none">
         <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
         <p>No findings match your filters</p>
@@ -702,12 +583,6 @@ body::before {
 /* ── Health card (no animation) ── */
 
 /* ── Health explanation ── */
-
-/* ── Expanded findings highlight ── */
-.finding-unified-row[open] {
-  position: relative;
-  box-shadow: 0 0 0 1px var(--accent);
-}
 
 /* ── Status text ── */
 .typing-status {
@@ -1068,46 +943,67 @@ body::before {
 /* ── Unified Findings ── */
 .findings-unified { margin-bottom: 16px; }
 
-.findings-thead {
-  display: grid;
-  grid-template-columns: 120px 1fr 100px 90px 1.5fr 32px;
-  gap: 8px;
-  padding: 10px 20px;
-  background: var(--bg-elevated);
-  border-bottom: 1px solid var(--grid-line-strong);
+/* ── Finding Cards (Human Readable) ── */
+.findings-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 }
 
-.findings-th {
-  font-size: 0.6rem;
+.finding-card {
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--grid-line);
+  transition: background 0.15s;
+}
+
+.finding-card:last-child { border-bottom: none; }
+.finding-card:hover { background: var(--bg-hover); }
+.finding-card.finding-hidden { display: none; }
+
+.finding-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.finding-card-title {
   font-weight: 600;
-  text-transform: uppercase;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.finding-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-left: 18px;
+}
+
+.finding-card-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.finding-card-label {
+  font-size: 0.6rem;
+  font-weight: 700;
   letter-spacing: 0.08em;
   color: var(--text-muted);
-  position: relative;
-  padding-right: 12px;
-}
-.findings-th:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: 2px;
+  text-transform: uppercase;
 }
 
-/* Sort indicators */
-.findings-th.sort-asc::after,
-.findings-th.sort-desc::after {
-  content: '';
-  position: absolute;
-  right: 0;
-  top: 50%;
-  border: 4px solid transparent;
+.finding-card-text {
+  font-size: 0.82rem;
+  line-height: 1.65;
+  color: var(--text-secondary);
+  margin: 0;
 }
-.findings-th.sort-desc::after {
-  border-top-color: var(--accent);
-  transform: translateY(-2px);
-}
-.findings-th.sort-asc::after {
-  border-bottom-color: var(--accent);
-  transform: translateY(-6px);
+
+.finding-card-action .finding-card-text {
+  color: var(--accent);
+  font-weight: 500;
 }
 
 /* ── Filter Toolbar ── */
@@ -1278,270 +1174,6 @@ body::before {
 .section-collapsible > summary:hover {
   color: var(--text-secondary);
 }
-.section-collapsible-content {
-  /* content shown by default via open attr */
-}
-
-.finding-unified-row {
-  border-bottom: 1px solid var(--grid-line);
-  transition: background 0.15s;
-}
-.finding-unified-row:last-child { border-bottom: none; }
-.finding-unified-row:hover { background: var(--bg-hover); }
-.finding-unified-row[open] { background: var(--bg-elevated); }
-.finding-unified-row[open] > .finding-summary { border-bottom: 1px solid var(--grid-line); }
-
-.finding-summary {
-  display: grid;
-  grid-template-columns: 120px 1fr 100px 90px 1.5fr 32px;
-  gap: 8px;
-  padding: 14px 20px;
-  cursor: pointer;
-  list-style: none;
-  user-select: none;
-  align-items: center;
-  animation: fadeInRow 0.4s ease backwards;
-  position: relative;
-  z-index: 1;
-}
-.finding-summary::-webkit-details-marker { display: none; }
-
-.finding-col { display: flex; align-items: center; }
-.finding-col--sev { gap: 8px; }
-.finding-col--name { font-weight: 600; color: var(--text-primary); font-size: 0.82rem; }
-.finding-col--savings { flex-direction: column; align-items: flex-start; }
-.finding-col--conf { gap: 6px; }
-.finding-col--summary { color: var(--text-secondary); font-size: 0.72rem; line-height: 1.5; }
-.finding-col--chevron { justify-content: center; }
-
-.sev-indicator {
-  display: inline-block;
-  width: 8px; height: 8px;
-  border-radius: 2px;
-  flex-shrink: 0;
-}
-.sev-text { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.06em; }
-.savings-pct { font-weight: 700; font-size: 0.82rem; }
-.savings-detail { font-size: 0.62rem; color: var(--text-muted); margin-top: 2px; }
-.conf-bar { width: 50px; height: 4px; background: var(--grid-line); border-radius: 2px; overflow: hidden; }
-.conf-fill { height: 100%; border-radius: 2px; }
-.conf-text { font-size: 0.68rem; color: var(--text-muted); }
-
-.chevron-icon {
-  width: 16px; height: 16px;
-  color: var(--text-muted);
-  transition: transform 0.2s;
-}
-.finding-unified-row[open] .chevron-icon { transform: rotate(180deg); }
-
-.finding-expanded {
-  padding: 20px 24px;
-  position: relative;
-  z-index: 1;
-}
-
-.finding-detail-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
-  margin-bottom: 16px;
-}
-
-.finding-section { margin-bottom: 16px; }
-.finding-section:last-child { margin-bottom: 0; }
-
-.section-tag {
-  font-size: 0.64rem;
-  color: var(--text-muted);
-  letter-spacing: 0.08em;
-  font-weight: 600;
-  margin-bottom: 10px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.section-hash { color: var(--accent); font-weight: 700; }
-
-.section-content {
-  font-size: 0.8rem;
-  line-height: 1.7;
-  color: var(--text-secondary);
-}
-.section-content p { margin-bottom: 8px; }
-.section-content strong { color: var(--text-primary); }
-.section-content code {
-  background: var(--bg-elevated);
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-size: 0.76rem;
-  border: 1px solid var(--grid-line);
-}
-.section-content ul { margin: 6px 0; padding-left: 16px; }
-.section-content li { margin-bottom: 3px; }
-
-.no-findings {
-  text-align: center;
-  padding: 40px 20px;
-  color: var(--text-muted);
-  letter-spacing: 0.08em;
-  font-size: 0.8rem;
-}
-
-/* ── Remediation Steps ── */
-.step {
-  display: flex;
-  gap: 14px;
-  margin-bottom: 14px;
-  padding: 16px 18px;
-  background: var(--bg-surface);
-  border-radius: var(--radius);
-  border-left: 3px solid var(--accent);
-  animation: fadeInStep 0.4s ease backwards;
-}
-
-.step-num {
-  font-size: 0.68rem;
-  color: var(--accent);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  padding-top: 2px;
-  flex-shrink: 0;
-}
-
-.step-content { flex: 1; }
-
-.step-action {
-  font-weight: 600;
-  font-size: 0.82rem;
-  color: var(--text-primary);
-  margin-bottom: 10px;
-}
-
-.step-meta { display: flex; flex-direction: column; gap: 8px; }
-
-.step-how, .step-impact {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  font-size: 0.76rem;
-  line-height: 1.6;
-}
-
-.step-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.58rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  padding: 3px 8px;
-  border-radius: 3px;
-  flex-shrink: 0;
-  margin-top: 2px;
-  min-width: 52px;
-  text-align: center;
-}
-
-.step-badge--how {
-  background: rgba(34,211,238,0.15);
-  color: var(--accent);
-  border: 1px solid rgba(34,211,238,0.25);
-}
-
-.step-badge--impact {
-  background: rgba(52,211,153,0.15);
-  color: var(--green);
-  border: 1px solid rgba(52,211,153,0.25);
-}
-
-[data-theme="light"] .step-badge--how {
-  background: rgba(8,145,178,0.1);
-  color: var(--accent);
-  border: 1px solid rgba(8,145,178,0.2);
-}
-[data-theme="light"] .step-badge--impact {
-  background: rgba(5,150,105,0.1);
-  color: var(--green);
-  border: 1px solid rgba(5,150,105,0.2);
-}
-
-.step-text { color: var(--text-secondary); }
-
-/* ── Examples ── */
-.examples-section { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
-
-.example-pair {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
-.example-side {
-  padding: 12px 14px;
-  border-radius: var(--radius);
-  border: 1px solid;
-}
-
-.example-bad { background: rgba(255,77,106,0.06); border-color: rgba(255,77,106,0.2); }
-.example-good { background: rgba(52,211,153,0.06); border-color: rgba(52,211,153,0.2); }
-
-.example-tag {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 0.58rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  color: var(--text-muted);
-  margin-bottom: 8px;
-}
-.example-bad .example-tag { color: var(--red); }
-.example-good .example-tag { color: var(--green); }
-
-.example-side code {
-  display: block;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  line-height: 1.6;
-  color: var(--text-secondary);
-}
-
-/* ── Quick Win ── */
-.quickwin-strip {
-  margin-top: 16px;
-  padding: 14px 16px;
-  border: 1px solid;
-  border-radius: var(--radius);
-  background: var(--bg-surface);
-}
-
-.quickwin-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  padding: 3px 8px;
-  border-radius: 3px;
-  margin-bottom: 8px;
-}
-
-.quickwin-text {
-  font-size: 0.78rem;
-  line-height: 1.6;
-  color: var(--text-secondary);
-}
-.quickwin-text code {
-  background: var(--bg-elevated);
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-size: 0.74rem;
-  border: 1px solid var(--grid-line);
-}
-
 /* ── Actions ── */
 .fix-suggestions { margin-bottom: 16px; }
 
@@ -1784,15 +1416,6 @@ body::before {
 
 @media (max-width: 900px) {
   .actions-grid { grid-template-columns: 1fr; }
-  .example-pair { grid-template-columns: 1fr; }
-  .finding-detail-grid { grid-template-columns: 1fr; }
-  .findings-thead { display: none; }
-  .finding-summary {
-    grid-template-columns: 1fr;
-    gap: 6px;
-  }
-  .finding-col--summary { display: none; }
-  .finding-col--chevron { display: none; }
   .findings-toolbar {
     flex-wrap: wrap;
     gap: 8px;
@@ -1849,12 +1472,6 @@ body::before {
   }
   .findings-count {
     text-align: center;
-  }
-  .finding-summary {
-    grid-template-columns: 1fr;
-    gap: 4px;
-    padding: 12px 14px;
-    min-height: 44px;
   }
   .section-collapsible > summary {
     min-height: 44px;
@@ -1968,87 +1585,6 @@ function toggleTheme() {
   document.querySelectorAll('.savings-bars').forEach(function(el) { observer.observe(el); });
 })();
 
-// ── Sortable column headers ──
-(function() {
-  var severityOrder = { high: 0, medium: 1, low: 2 };
-  var currentSort = null;
-  var currentDir = 'desc';
-
-  function sortRows(key, direction) {
-    var container = document.querySelector('.findings-tbody');
-    if (!container) return;
-    var rows = Array.prototype.slice.call(container.querySelectorAll('.finding-unified-row:not(.finding-hidden)'));
-    var hidden = Array.prototype.slice.call(container.querySelectorAll('.finding-unified-row.finding-hidden'));
-
-    rows.sort(function(a, b) {
-      var va, vb;
-      if (key === 'severity') {
-        va = severityOrder[a.getAttribute('data-severity')] ?? 9;
-        vb = severityOrder[b.getAttribute('data-severity')] ?? 9;
-      } else if (key === 'savings') {
-        va = parseFloat(a.getAttribute('data-sort-savings')) || 0;
-        vb = parseFloat(b.getAttribute('data-sort-savings')) || 0;
-      } else if (key === 'confidence') {
-        va = parseFloat(a.getAttribute('data-sort-confidence')) || 0;
-        vb = parseFloat(b.getAttribute('data-sort-confidence')) || 0;
-      } else if (key === 'name') {
-        va = (a.getAttribute('data-sort-name') || '').toLowerCase();
-        vb = (b.getAttribute('data-sort-name') || '').toLowerCase();
-        if (va < vb) return -1;
-        if (va > vb) return 1;
-        return 0;
-      } else if (key === 'summary') {
-        va = (a.getAttribute('data-sort-name') || '').toLowerCase();
-        vb = (b.getAttribute('data-sort-name') || '').toLowerCase();
-        if (va < vb) return direction === 'asc' ? -1 : 1;
-        if (va > vb) return direction === 'asc' ? 1 : -1;
-        return 0;
-      } else {
-        return 0;
-      }
-      if (typeof va === 'string') {
-        var cmp = va.localeCompare(vb);
-        return direction === 'asc' ? cmp : -cmp;
-      }
-      return direction === 'asc' ? va - vb : vb - va;
-    });
-
-    // Re-append visible rows first, then hidden
-    rows.forEach(function(r) { container.appendChild(r); });
-    hidden.forEach(function(r) { container.appendChild(r); });
-
-    // Update indicators
-    document.querySelectorAll('.findings-th').forEach(function(th) {
-      th.classList.remove('sort-asc', 'sort-desc');
-    });
-    var activeTh = document.querySelector('.findings-th[data-sort-key="' + key + '"]');
-    if (activeTh) {
-      activeTh.classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
-    }
-
-    currentSort = key;
-    currentDir = direction;
-  }
-
-  document.querySelectorAll('.findings-th[data-sort-key]').forEach(function(th) {
-    th.style.cursor = 'pointer';
-    function doSort() {
-      var key = th.getAttribute('data-sort-key');
-      if (!key) return;
-      var dir = (currentSort === key && currentDir === 'desc') ? 'asc' : 'desc';
-      sortRows(key, dir);
-    }
-    th.addEventListener('click', doSort);
-    th.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doSort(); }
-    });
-  });
-
-  // Expose for filter to re-sort after filtering
-  window.__tokenomicsSort = sortRows;
-  window.__tokenomicsSortState = function() { return { key: currentSort, dir: currentDir }; };
-})();
-
 // ── Filter toolbar logic ──
 (function() {
   function applyFilters() {
@@ -2061,21 +1597,21 @@ function toggleTheme() {
     var detectorSelect = document.getElementById('detector-filter');
     var selectedDetector = detectorSelect ? detectorSelect.value : '';
 
-    var rows = document.querySelectorAll('.finding-unified-row');
+    var cards = document.querySelectorAll('.finding-card');
     var visibleCount = 0;
-    var totalCount = rows.length;
+    var totalCount = cards.length;
 
-    rows.forEach(function(row) {
-      var sev = row.getAttribute('data-severity');
-      var det = row.getAttribute('data-detector');
+    cards.forEach(function(card) {
+      var sev = card.getAttribute('data-severity');
+      var det = card.getAttribute('data-detector');
       var matchesSev = activeSeverities.indexOf(sev) !== -1;
       var matchesDet = !selectedDetector || det === selectedDetector;
 
       if (matchesSev && matchesDet) {
-        row.classList.remove('finding-hidden');
+        card.classList.remove('finding-hidden');
         visibleCount++;
       } else {
-        row.classList.add('finding-hidden');
+        card.classList.add('finding-hidden');
       }
     });
 
@@ -2091,12 +1627,6 @@ function toggleTheme() {
     var clearBtn = document.getElementById('clear-filters');
     var hasFilter = activeSeverities.length < checkboxes.length || selectedDetector;
     if (clearBtn) clearBtn.style.display = hasFilter ? 'inline-flex' : 'none';
-
-    // Re-sort if sort is active
-    if (window.__tokenomicsSortState && window.__tokenomicsSort) {
-      var state = window.__tokenomicsSortState();
-      if (state.key) window.__tokenomicsSort(state.key, state.dir);
-    }
   }
 
   // Listen to checkbox changes
