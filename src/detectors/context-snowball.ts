@@ -133,7 +133,7 @@ export function detectContextSnowball(sessions: SessionData[]): DetectorResult |
       project: s.session.project,
       date: s.session.startedAt.split('T')[0] ?? '',
       startedAt: s.session.startedAt,
-      firstPrompt: s.session.messages.find((m) => m.role === 'user')?.content?.slice(0, 120) ?? '',
+      firstPrompt: s.session.messages.find((m) => m.role === 'user')?.content?.slice(0, 300) ?? '',
       inflectionTurn: s.inflectionTurn,
       growthMultiplier: Math.round(s.growthMultiplier * 10) / 10,
       excessTokens: s.excessTokens,

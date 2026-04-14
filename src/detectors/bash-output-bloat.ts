@@ -120,7 +120,7 @@ export function detectBashOutputBloat(sessions: SessionData[]): DetectorResult |
               command: command.slice(0, 100),
               category: match.category,
               startedAt: session.startedAt,
-              firstPrompt: session.messages.find((m) => m.role === 'user')?.content?.slice(0, 120) ?? '',
+              firstPrompt: session.messages.find((m) => m.role === 'user')?.content?.slice(0, 300) ?? '',
             });
           }
         }

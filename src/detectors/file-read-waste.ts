@@ -113,7 +113,7 @@ export function detectFileReadWaste(sessions: SessionData[]): DetectorResult | n
           count: info.count,
           tokens: Math.round(session.totalInputTokens / session.toolUses.length) * (info.count - 1),
           startedAt: session.startedAt,
-          firstPrompt: session.messages.find((m) => m.role === 'user')?.content?.slice(0, 120) ?? '',
+          firstPrompt: session.messages.find((m) => m.role === 'user')?.content?.slice(0, 300) ?? '',
         });
       }
     }

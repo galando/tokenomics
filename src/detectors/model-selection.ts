@@ -165,7 +165,7 @@ export function detectModelSelection(sessions: SessionData[]): DetectorResult | 
         project: session.project,
         date: session.startedAt.split('T')[0] ?? '',
         startedAt: session.startedAt,
-        firstPrompt: session.messages.find((m) => m.role === 'user')?.content?.slice(0, 120) ?? '',
+        firstPrompt: session.messages.find((m) => m.role === 'user')?.content?.slice(0, 300) ?? '',
         model: session.model,
         toolCount: session.toolUses.length,
         suggestedModel: complexity.suggestedModel,

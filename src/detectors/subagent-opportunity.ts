@@ -81,7 +81,7 @@ export function detectSubagentOpportunity(sessions: SessionData[]): DetectorResu
       filesExplored: o.filesExplored,
       date: o.session.startedAt.split('T')[0] ?? '',
       startedAt: o.session.startedAt,
-      firstPrompt: o.session.messages.find((m) => m.role === 'user')?.content?.slice(0, 120) ?? '',
+      firstPrompt: o.session.messages.find((m) => m.role === 'user')?.content?.slice(0, 300) ?? '',
     }));
 
   const totalTokens = sessions.reduce(
