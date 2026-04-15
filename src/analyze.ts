@@ -34,7 +34,7 @@ import { auditPrompt } from './auditor.js';
 import { renderPromptOutput } from './prompt-output.js';
 import { ensureBudgetConfig, readBudgetConfig } from './budget-config.js';
 
-const VERSION = '2.1.0';
+const VERSION = '2.2.0';
 
 // ─── CLI ──────────────────────────────────────────────────────────────────────
 
