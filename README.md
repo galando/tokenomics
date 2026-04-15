@@ -2,7 +2,7 @@
 
 A CLI tool that analyzes your Claude Code session history to identify token waste patterns and provide actionable fixes. Runs locally, no LLM needed.
 
-**v2.3** adds `--analyze-skill` mode for static token analysis of AI agent skill packages — designed for integration with skill registries like [Tank](https://github.com/galando/tank).
+**v2.3** adds `--analyze-skill` mode for static token analysis of AI agent skill packages — designed for integration with skill registries like [Tank](https://github.com/tankpkg/tank).
 
 **The mental model: tokenomics is a coach, not a remote control.** It writes suggestions into your CLAUDE.md where Claude can see them. Claude is smart enough to follow most of them — suggesting `/compact` when context grows, recommending Sonnet for simple tasks, warning when you're overspending. But it cannot switch models, run commands, or force behavior. The user is always in control.
 
@@ -267,7 +267,7 @@ Budget config lives at `~/.claude/tokenomics.json`:
 
 ## Skill Analysis (`--analyze-skill`)
 
-Analyze an AI agent skill package directory for token efficiency. Useful for skill authors before publishing, and for skill registries (like [Tank](https://github.com/galando/tank)) to include token findings alongside security scan results.
+Analyze an AI agent skill package directory for token efficiency. Useful for skill authors before publishing, and for skill registries (like [Tank](https://github.com/tankpkg/tank)) to include token findings alongside security scan results.
 
 ```bash
 # Analyze a skill package
