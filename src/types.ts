@@ -490,6 +490,8 @@ export interface CliOptions {
   budgetCheck: boolean;
   /** Suppress budget alerts (no CLAUDE.md injection) */
   noAlerts: boolean;
+  /** Analyze a skill package directory for token efficiency */
+  analyzeSkill: string | undefined;
 }
 
 // ============================================================================
@@ -673,4 +675,41 @@ export interface AuditReport {
     warning: number;
     info: number;
   };
+}
+
+// ============================================================================
+// Skill Analysis Types (--analyze-skill)
+// ============================================================================
+
+export type SkillSeverity = 'info' | 'low' | 'medium' | 'high';
+
+export interface SkillFinding {
+  rule: string;
+  severity: SkillSeverity;
+  confidence: number;
+  description: string;
+  location: string;
+  remediation: string;
+}
+
+export interface SkillAnalysisSummary {
+  total_findings: number;
+  estimated_tokens_per_invocation: number;
+  efficiency_score: number; // 0-100
+}
+
+export interface SkillAnalysisResult {
+  findings: SkillFinding[];
+  summary: SkillAnalysisSummary;
+}
+
+export interface SkillRule {
+  name: string;
+  analyze(context: SkillAnalysisContext): SkillFinding[];
+}
+
+export interface SkillAnalysisContext {
+  skillDir: string;
+  files: Map<string, string>; // filename → content
+  skillManifest: Record<string, unknown> | null;
 }

@@ -1,6 +1,6 @@
 {
   "name": "tokenomics",
-  "version": "2.2.2",
+  "version": "2.3.0",
   "description": "Token intelligence for Claude Code — analyze sessions, find waste, get actionable fixes",
   "type": "module",
   "main": "dist/analyze.js",
