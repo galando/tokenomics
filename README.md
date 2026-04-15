@@ -2,7 +2,7 @@
 
 A CLI tool that analyzes your Claude Code session history to identify token waste patterns and provide actionable fixes. Runs locally, no LLM needed.
 
-**v2.2** adds human-readable findings with plain-English explanations, collapsible HTML report sections, and evidence-based action items.
+**v2.3** adds `--analyze-skill` mode for static token analysis of AI agent skill packages — designed for integration with skill registries like [Tank](https://github.com/galando/tank).
 
 **The mental model: tokenomics is a coach, not a remote control.** It writes suggestions into your CLAUDE.md where Claude can see them. Claude is smart enough to follow most of them — suggesting `/compact` when context grows, recommending Sonnet for simple tasks, warning when you're overspending. But it cannot switch models, run commands, or force behavior. The user is always in control.
 
@@ -240,6 +240,7 @@ Budget config lives at `~/.claude/tokenomics.json`:
 | `--inject` | Re-analyze sessions + update CLAUDE.md findings | false |
 | `--quiet` | Suppress terminal output (used by hooks) | false |
 | `--verbose` | Show discovery progress and debug info | false |
+| `--analyze-skill <dir>` | Analyze skill package for token efficiency (outputs JSON) | - |
 | `--help` | Show help message | - |
 | `--version` | Show version | - |
 
@@ -263,6 +264,82 @@ Budget config lives at `~/.claude/tokenomics.json`:
 | Session Timing | Time-based efficiency patterns | Rate limit optimization |
 | Subagent Opportunity | Delegation opportunities | Parallel execution |
 | Smart Router | Historical routing patterns | ~80% on simple tasks |
+
+## Skill Analysis (`--analyze-skill`)
+
+Analyze an AI agent skill package directory for token efficiency. Useful for skill authors before publishing, and for skill registries (like [Tank](https://github.com/galando/tank)) to include token findings alongside security scan results.
+
+```bash
+# Analyze a skill package
+tokenomics --analyze-skill ./my-skill
+
+# With pretty-printed JSON
+tokenomics --analyze-skill ./my-skill --verbose
+```
+
+### Output format
+
+```json
+{
+  "findings": [
+    {
+      "rule": "prompt-size",
+      "severity": "medium",
+      "confidence": 0.9,
+      "description": "Prompt file \"SKILL.md\" is ~4,200 tokens (16,800 chars)...",
+      "location": "SKILL.md",
+      "remediation": "Trim to under 2000 tokens. Move detailed examples to separate files..."
+    },
+    {
+      "rule": "tool-overhead",
+      "severity": "medium",
+      "confidence": 0.85,
+      "description": "12 tool definitions found. Each adds ~200-500 tokens of context...",
+      "location": "manifest/config",
+      "remediation": "Consider reducing to 8 or fewer tools..."
+    }
+  ],
+  "summary": {
+    "total_findings": 3,
+    "estimated_tokens_per_invocation": 8500,
+    "efficiency_score": 72
+  }
+}
+```
+
+### Analysis rules
+
+| Rule | What it checks | Thresholds |
+|------|---------------|------------|
+| `prompt-size` | SKILL.md and `.atom.md` files exceeding token limits | >2000 tokens = medium, >4000 = high |
+| `claude-md-size` | CLAUDE.md injection blocks that bloat system prompts | >1500 tokens = medium, >3000 = high |
+| `tool-overhead` | Tool definitions in manifest (tank.json, skills.json) | >8 tools = medium, >15 = high |
+| `large-files` | Files with >500 lines that are expensive to read | >500 lines = low, >1000 = medium |
+| `redundant-instructions` | Duplicated instruction lines across skill files | >30% duplication = low/medium |
+
+### Efficiency score
+
+The `efficiency_score` (0-100) reflects overall token efficiency. It starts at 100 and deducts points per finding: -15 for high, -8 for medium, -3 for low, -1 for info. A bonus +10 is given for skill packages under 1000 total tokens.
+
+### Integration with skill registries
+
+The `--analyze-skill` mode is designed to be called as a subprocess from security scanning pipelines. Example from Tank's Python scanner:
+
+```python
+import subprocess, json
+
+result = subprocess.run(
+    ["tokenomics", "--analyze-skill", skill_dir, "--json"],
+    capture_output=True, text=True, timeout=10
+)
+if result.returncode == 0:
+    analysis = json.loads(result.stdout)
+    for finding in analysis["findings"]:
+        # Convert to your scan Finding model
+        print(f"[{finding['severity']}] {finding['rule']}: {finding['description']}")
+```
+
+Graceful degradation: if tokenomics is not installed, the calling pipeline should skip this stage and continue.
 
 ## Output Examples
 
