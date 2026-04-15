@@ -951,7 +951,6 @@ body::before {
 }
 
 .finding-card {
-  padding: 20px 24px;
   border-bottom: 1px solid var(--grid-line);
   transition: background 0.15s;
 }
@@ -960,11 +959,33 @@ body::before {
 .finding-card:hover { background: var(--bg-hover); }
 .finding-card.finding-hidden { display: none; }
 
+.finding-card > summary {
+  padding: 16px 24px;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.finding-card > summary::-webkit-details-marker { display: none; }
+
 .finding-card-header {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  margin-bottom: 14px;
+  flex: 1;
+}
+
+.finding-card-chevron {
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  margin-top: 2px;
+  transition: transform 0.2s;
+}
+.finding-card[open] > summary .finding-card-chevron {
+  transform: rotate(180deg);
 }
 
 .finding-card-title {
@@ -977,7 +998,7 @@ body::before {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding-left: 18px;
+  padding: 0 24px 16px 52px;
 }
 
 .finding-card-section {

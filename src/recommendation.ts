@@ -456,11 +456,12 @@ export function renderHtmlBlock(block: HumanReadableBlock, severity: Severity): 
   const evidenceHtml = escapeHtml(block.evidence).replace(/\n/g, '<br>');
   const actionHtml = escapeHtml(block.action).replace(/\n/g, '<br>');
 
-  return `<div class="finding-card" data-severity="${severity}" data-detector="${escapeHtml(block.detector)}">
-  <div class="finding-card-header">
+  return `<details class="finding-card" data-severity="${severity}" data-detector="${escapeHtml(block.detector)}" open>
+  <summary class="finding-card-header">
     <span class="sev-indicator" style="background:${sev.color};box-shadow:0 0 8px ${sev.color}40"></span>
     <span class="finding-card-title" style="color:${sev.color}">${escapeHtml(block.headline)}</span>
-  </div>
+    <svg class="finding-card-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+  </summary>
   <div class="finding-card-body">
     <div class="finding-card-section">
       <span class="finding-card-label">Evidence</span>
@@ -475,5 +476,5 @@ export function renderHtmlBlock(block: HumanReadableBlock, severity: Severity): 
       <p class="finding-card-text">${actionHtml}</p>
     </div>
   </div>
-</div>`;
+</details>`;
 }
