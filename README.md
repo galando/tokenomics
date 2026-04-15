@@ -326,7 +326,7 @@ PROJECT: 32%
 ```bash
 npm install        # Install dependencies
 npm run build      # Compile TypeScript
-npm test           # Run tests (173 tests)
+npm test           # Run tests
 npm run typecheck  # Type checking
 npm run dev        # Watch mode
 ```
