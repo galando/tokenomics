@@ -212,6 +212,14 @@ export interface Remediation {
   effort: 'quick' | 'moderate' | 'involved';
 }
 
+export interface HumanReadableBlock {
+  detector: string;
+  headline: string;
+  evidence: string;
+  consequence: string;
+  action: string;
+}
+
 export interface DetectorResult {
   /** Detector identifier (kebab-case) */
   detector: string;
