@@ -2,7 +2,7 @@
 
 A CLI tool that analyzes your Claude Code session history to identify token waste patterns and provide actionable fixes. Runs locally, no LLM needed.
 
-**v2.0.0** adds prompt analysis (`--prompt`), token budget tracking (`--budget`), and behavioral coaching injected into your Claude Code sessions.
+**v2.2** adds human-readable findings with plain-English explanations, collapsible HTML report sections, and evidence-based action items.
 
 **The mental model: tokenomics is a coach, not a remote control.** It writes suggestions into your CLAUDE.md where Claude can see them. Claude is smart enough to follow most of them — suggesting `/compact` when context grows, recommending Sonnet for simple tasks, warning when you're overspending. But it cannot switch models, run commands, or force behavior. The user is always in control.
 
@@ -270,7 +270,7 @@ Budget config lives at `~/.claude/tokenomics.json`:
 
 ```
   TOKENOMICS — Token Intelligence for Claude Code
-  60 sessions // 30 day range // v2.0.0
+  60 sessions // 30 day range // v2.2.2
 
   Sessions:   60
   Total:     1.2M tokens
@@ -283,6 +283,34 @@ Budget config lives at `~/.claude/tokenomics.json`:
   │ Context Snowball        │ ● HIGH   │ ~38%       │ 92%        │
   │ Model Selection         │ ● MED    │ ~15%       │ 85%        │
   └─────────────────────────┴──────────┴────────────┴────────────┘
+
+  ──────────────────────────────────────────────────────────────
+  ● Your context window ballooned without /compact in 12 of 60 sessions (20%).
+
+  Evidence:
+    Worst: my-project on Mar 24 at 14:30 — context grew 4.2x by message 9,
+    wasting 38K tokens.
+    You were working on: "refactor the auth module"
+
+  Impact:    Every message in a snowballed session re-sends the entire
+             conversation history, compounding token cost.
+
+  Action:
+    In my-project, your context typically snowballs around message 9.
+    Run /compact around message 7 — before it grows, not after.
+    When switching to a different task, run /clear instead.
+```
+
+### HTML Report
+
+The `--html` report now features:
+
+- **Collapsible sections** — Overview, Findings, and Actions sections are open by default and can be collapsed/expanded. State persists via localStorage.
+- **Human-readable finding cards** — Each finding has four parts: headline, evidence, impact, and action. Cards are collapsible and filterable by severity.
+- **Plain-English explanations** — Instead of jargon like "turn 8 snowball detected", findings say "your context typically snowballs around message 9 in my-project — run /compact around message 7".
+
+```bash
+tokenomics --html    # Opens interactive report in browser
 ```
 
 ### Prompt Analysis

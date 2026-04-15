@@ -240,7 +240,7 @@ function renderDashboard(metadata: AnalysisOutput['metadata'], findings: Detecto
     : '0';
   const totalSavings = findings.reduce((s, f) => s + f.savingsPercent, 0);
 
-  return `<details class="section-collapsible" id="collapsible-overview">
+  return `<details class="section-collapsible" id="collapsible-overview" open>
   <summary class="section-collapsible-summary">
     <svg viewBox="0 0 24 24" class="section-collapsible-chevron" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
     Overview
@@ -351,7 +351,7 @@ function renderUnifiedFindings(findings: DetectorResult[]): string {
     <button class="clear-filters-btn" id="clear-filters" style="display:none">Clear filters</button>
   </div>`;
 
-  return `<details class="section-collapsible" id="collapsible-findings">
+  return `<details class="section-collapsible" id="collapsible-findings" open>
   <summary class="section-collapsible-summary">
     <svg viewBox="0 0 24 24" class="section-collapsible-chevron" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
     Findings
@@ -420,7 +420,7 @@ function renderFixSuggestions(findings: DetectorResult[]): string {
     </li>`;
   }).filter(Boolean).join('\n');
 
-  return `<details class="section-collapsible" id="collapsible-actions">
+  return `<details class="section-collapsible" id="collapsible-actions" open>
   <summary class="section-collapsible-summary">
     <svg viewBox="0 0 24 24" class="section-collapsible-chevron" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
     Actions
