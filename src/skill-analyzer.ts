@@ -106,27 +106,19 @@ function estimateTokens(files: Map<string, string>): number {
 const SONNET_INPUT_PER_M = 3.00
 const OPUS_INPUT_PER_M = 15.00
 
-// Typical session: the skill context is re-sent as input on every turn.
-// A "typical" session is ~10 turns. The skill tokens are counted as input
-// on every turn, so total context-loading cost = tokens × turns × input_price.
-const TYPICAL_SESSION_TURNS = 10
-
 const AVG_SKILL_TOKENS = 20000
 
 function estimateCost(tokens: number): SkillCostEstimate {
   const tokenMillions = tokens / 1_000_000
 
-  const sonnetPerTurn = tokenMillions * SONNET_INPUT_PER_M
-  const opusPerTurn = tokenMillions * OPUS_INPUT_PER_M
-  const sonnetSession = sonnetPerTurn * TYPICAL_SESSION_TURNS
-  const opusSession = opusPerTurn * TYPICAL_SESSION_TURNS
+  const sonnetCost = tokenMillions * SONNET_INPUT_PER_M
+  const opusCost = tokenMillions * OPUS_INPUT_PER_M
 
   return {
-    sonnet_per_turn: formatUsd(sonnetPerTurn),
-    opus_per_turn: formatUsd(opusPerTurn),
-    sonnet_typical_session: formatUsd(sonnetSession),
-    opus_typical_session: formatUsd(opusSession),
-    note: 'Context loading cost only (input tokens per turn). Does not include AI output, tool calls, or conversation tokens.',
+    sonnet_context_load: formatUsd(sonnetCost),
+    opus_context_load: formatUsd(opusCost),
+    token_count: tokens,
+    pricing_note: `Based on input pricing: $${SONNET_INPUT_PER_M}/M (Sonnet), $${OPUS_INPUT_PER_M}/M (Opus). Actual cost depends on how the skill is loaded, cache behavior, and session length.`,
   }
 }
 
@@ -312,9 +304,8 @@ export function renderSkillReport(report: SkillAnalysisReport): string {
   lines.push('')
   lines.push(`  ${sizeBar(report.estimated_tokens)}`)
   lines.push('')
-  lines.push(`  Context cost:  ${report.cost_per_use.sonnet_per_turn}/turn (Sonnet)  |  ${report.cost_per_use.opus_per_turn}/turn (Opus)`)
-  lines.push(`  10-turn session: ${report.cost_per_use.sonnet_typical_session} (Sonnet)  |  ${report.cost_per_use.opus_typical_session} (Opus)`)
-  lines.push(`  ${dim}${report.cost_per_use.note}${reset}`)
+  lines.push(`  Context load:  ${report.cost_per_use.sonnet_context_load} (Sonnet)  |  ${report.cost_per_use.opus_context_load} (Opus)`)
+  lines.push(`  ${dim}${report.cost_per_use.pricing_note}${reset}`)
   lines.push('')
 
   if (report.findings.length > 0) {

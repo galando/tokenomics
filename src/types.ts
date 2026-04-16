@@ -716,16 +716,14 @@ export interface SkillAnalysisSummary {
 }
 
 export interface SkillCostEstimate {
-  /** Cost to load skill into context, per turn, on Sonnet (input tokens only) */
-  sonnet_per_turn: string;
-  /** Cost to load skill into context, per turn, on Opus (input tokens only) */
-  opus_per_turn: string;
-  /** Estimated cost for a typical 10-turn session on Sonnet */
-  sonnet_typical_session: string;
-  /** Estimated cost for a typical 10-turn session on Opus */
-  opus_typical_session: string;
-  /** Disclaimer: this is context loading cost only, not execution cost */
-  note: string;
+  /** Cost to load skill tokens as input once, on Sonnet */
+  sonnet_context_load: string;
+  /** Cost to load skill tokens as input once, on Opus */
+  opus_context_load: string;
+  /** How many tokens in the skill */
+  token_count: number;
+  /** Pricing used for the estimate */
+  pricing_note: string;
 }
 
 export type SkillGrade = 'A' | 'B' | 'C' | 'D';
