@@ -690,6 +690,23 @@ export interface SkillFinding {
   description: string;
   location: string;
   remediation: string;
+  /** Optional per-section token breakdown (section-analysis rule) */
+  sections?: SkillSection[];
+}
+
+export interface SkillSection {
+  /** Section heading text (e.g. "## Instructions") */
+  heading: string;
+  /** Heading level (1-6) */
+  level: number;
+  /** 0-based line offset where this section starts */
+  lineStart: number;
+  /** Estimated token count for this section's content (excluding heading) */
+  tokens: number;
+  /** Whether this section overlaps with another section */
+  redundantWith?: string[];
+  /** Why this section could be shortened */
+  shorteningTip?: string;
 }
 
 export interface SkillAnalysisSummary {

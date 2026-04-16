@@ -15,6 +15,7 @@ import * as claudeMdSizeRule from './skill-rules/claude-md-size.js'
 import * as toolOverheadRule from './skill-rules/tool-overhead.js'
 import * as largeFilesRule from './skill-rules/large-files.js'
 import * as redundantInstructionsRule from './skill-rules/redundant-instructions.js'
+import * as sectionAnalysisRule from './skill-rules/section-analysis.js'
 
 const CHARS_PER_TOKEN = 4
 
@@ -33,6 +34,7 @@ const rules: SkillRule[] = [
   { name: 'tool-overhead', analyze: toolOverheadRule.analyze },
   { name: 'large-files', analyze: largeFilesRule.analyze },
   { name: 'redundant-instructions', analyze: redundantInstructionsRule.analyze },
+  { name: 'section-analysis', analyze: sectionAnalysisRule.analyze },
 ]
 
 function discoverSkillFiles(dir: string): Map<string, string> {

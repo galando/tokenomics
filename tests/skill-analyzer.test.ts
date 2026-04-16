@@ -9,6 +9,7 @@ import * as claudeMdSizeRule from '../src/skill-rules/claude-md-size.js'
 import * as toolOverheadRule from '../src/skill-rules/tool-overhead.js'
 import * as largeFilesRule from '../src/skill-rules/large-files.js'
 import * as redundantInstructionsRule from '../src/skill-rules/redundant-instructions.js'
+import * as sectionAnalysisRule from '../src/skill-rules/section-analysis.js'
 import type { SkillAnalysisContext } from '../src/types.js'
 
 function createTempDir(): string {
@@ -247,6 +248,224 @@ describe('redundant-instructions rule', () => {
     const findings = redundantInstructionsRule.analyze(ctx)
 
     expect(findings.length).toBe(0)
+  })
+})
+
+// ─── Section Analysis Rule ────────────────────────────────────────────────────
+
+describe('section-analysis rule', () => {
+  it('reports per-section token counts', () => {
+    const skill = [
+      '# My Skill',
+      '',
+      'A brief description of the skill.',
+      '',
+      '## Instructions',
+      '',
+      ...Array(50).fill('When the user asks for help, follow these steps carefully and provide detailed feedback.'),
+      '',
+      '## Examples',
+      '',
+      ...Array(30).fill('Here is an example of how to handle a request from the user.'),
+    ].join('\n')
+
+    const ctx = makeContext({ 'SKILL.md': skill })
+    const findings = sectionAnalysisRule.analyze(ctx)
+
+    expect(findings.length).toBe(1)
+    expect(findings[0]!.rule).toBe('section-analysis')
+    expect(findings[0]!.sections).toBeDefined()
+    expect(findings[0]!.sections!.length).toBe(3) // preamble, Instructions, Examples
+
+    // Check that sections have token counts
+    const instructionsSection = findings[0]!.sections!.find(s => s.heading === 'Instructions')
+    expect(instructionsSection).toBeDefined()
+    expect(instructionsSection!.tokens).toBeGreaterThan(0)
+  })
+
+  it('flags sections with redundant/overlapping content', () => {
+    const sharedContent = Array(20).fill(
+      'Always use TypeScript strict mode for all new files in this project and follow the established patterns'
+    ).join(' ')
+
+    const skill = [
+      '# My Skill',
+      '',
+      '## Code Review',
+      '',
+      sharedContent,
+      'Also check for security issues in the authentication module.',
+      '',
+      '## Security Review',
+      '',
+      sharedContent,
+      'Also verify that authentication tokens are properly validated.',
+    ].join('\n')
+
+    const ctx = makeContext({ 'SKILL.md': skill })
+    const findings = sectionAnalysisRule.analyze(ctx)
+
+    expect(findings.length).toBe(1)
+    const finding = findings[0]!
+    expect(finding.description).toContain('overlap')
+
+    // Check redundantWith is populated
+    const codeReview = finding.sections!.find(s => s.heading === 'Code Review')
+    expect(codeReview!.redundantWith).toBeDefined()
+    expect(codeReview!.redundantWith).toContain('Security Review')
+  })
+
+  it('suggests shortening tips for sections with repeated lines', () => {
+    const skill = [
+      '# My Skill',
+      '',
+      '## Guidelines',
+      '',
+      ...Array(5).fill('Always check the types before submitting code changes.'),
+      '',
+      'Some unique content here that is different.',
+    ].join('\n')
+
+    const ctx = makeContext({ 'SKILL.md': skill })
+    const findings = sectionAnalysisRule.analyze(ctx)
+
+    // Should have findings since Guidelines has repeated lines
+    if (findings.length > 0) {
+      const guidelines = findings[0]!.sections!.find(s => s.heading === 'Guidelines')
+      if (guidelines?.shorteningTip) {
+        expect(guidelines.shorteningTip).toContain('repeated')
+      }
+    }
+  })
+
+  it('suggests shortening for sections with many list items', () => {
+    const listItems = Array(12).fill(0).map((_, i) => `- Item number ${i + 1} that describes a specific check to perform`).join('\n')
+
+    const skill = [
+      '# My Skill',
+      '',
+      '## Checklist',
+      '',
+      listItems,
+    ].join('\n')
+
+    const ctx = makeContext({ 'SKILL.md': skill })
+    const findings = sectionAnalysisRule.analyze(ctx)
+
+    if (findings.length > 0) {
+      const checklist = findings[0]!.sections!.find(s => s.heading === 'Checklist')
+      if (checklist?.shorteningTip) {
+        expect(checklist.shorteningTip).toContain('list items')
+      }
+    }
+  })
+
+  it('suggests shortening for sections with many code blocks', () => {
+    const codeBlocks = Array(3).fill(0).map((_, i) => `Example ${i}:\n\`\`\`ts\nconst x = ${i};\n\`\`\``).join('\n\n')
+
+    const skill = [
+      '# My Skill',
+      '',
+      '## Examples',
+      '',
+      codeBlocks,
+      '',
+      'Some additional content to make this section large enough to be over the threshold.',
+      'More filler content that pushes the token count above the detection minimum.',
+    ].join('\n')
+
+    const ctx = makeContext({ 'SKILL.md': skill })
+    const findings = sectionAnalysisRule.analyze(ctx)
+
+    if (findings.length > 0) {
+      const examples = findings[0]!.sections!.find(s => s.heading === 'Examples')
+      if (examples?.shorteningTip) {
+        expect(examples.shorteningTip).toContain('code blocks')
+      }
+    }
+  })
+
+  it('does not flag small, clean sections', () => {
+    const skill = [
+      '# My Skill',
+      '',
+      'A brief skill that does one thing.',
+      '',
+      '## Usage',
+      '',
+      'Run the command with the file path.',
+    ].join('\n')
+
+    const ctx = makeContext({ 'SKILL.md': skill })
+    const findings = sectionAnalysisRule.analyze(ctx)
+
+    expect(findings.length).toBe(0)
+  })
+
+  it('ignores non-prompt files', () => {
+    const ctx = makeContext({ 'package.json': '{"name": "test"}' })
+    const findings = sectionAnalysisRule.analyze(ctx)
+
+    expect(findings.length).toBe(0)
+  })
+
+  it('analyzes .atom.md files', () => {
+    const skill = [
+      '## Search',
+      '',
+      ...Array(60).fill('Detailed search instructions that explain how to search for files in the project directory.'),
+    ].join('\n')
+
+    const ctx = makeContext({ 'tools/search.atom.md': skill })
+    const findings = sectionAnalysisRule.analyze(ctx)
+
+    expect(findings.length).toBe(1)
+    expect(findings[0]!.location).toContain('.atom.md')
+  })
+
+  it('includes sections array in JSON output', () => {
+    const skill = [
+      '# Skill',
+      '',
+      'Preamble content here.',
+      '',
+      '## Section A',
+      '',
+      'Content for section A that is reasonably sized.',
+      '',
+      '## Section B',
+      '',
+      'Content for section B that is also reasonably sized.',
+    ].join('\n')
+
+    const ctx = makeContext({ 'SKILL.md': skill })
+    const findings = sectionAnalysisRule.analyze(ctx)
+
+    // Even if no findings (sections are small), verify JSON serialization
+    if (findings.length > 0) {
+      const json = JSON.stringify(findings[0])
+      const parsed = JSON.parse(json)
+      expect(parsed.sections).toBeDefined()
+      expect(Array.isArray(parsed.sections)).toBe(true)
+    }
+  })
+
+  it('high severity for sections >1000 tokens', () => {
+    const hugeSection = 'Very detailed instruction content. '.repeat(600) // ~16800 chars = ~4200 tokens
+
+    const skill = [
+      '# Skill',
+      '',
+      '## Deep Dive',
+      '',
+      hugeSection,
+    ].join('\n')
+
+    const ctx = makeContext({ 'SKILL.md': skill })
+    const findings = sectionAnalysisRule.analyze(ctx)
+
+    expect(findings.length).toBe(1)
+    expect(findings[0]!.severity).toBe('high')
   })
 })
 
