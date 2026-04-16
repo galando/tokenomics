@@ -102,26 +102,23 @@ function estimateTokens(files: Map<string, string>): number {
 
 // ── Cost estimation ──────────────────────────────────────────────────────────
 
-// Approximate USD per 1M tokens (as of 2026)
+// Approximate USD per 1M input tokens (as of 2026)
 const SONNET_INPUT_PER_M = 3.00
-const SONNET_OUTPUT_PER_M = 15.00
 const OPUS_INPUT_PER_M = 15.00
-const OPUS_OUTPUT_PER_M = 75.00
-
-// Assume ~80% input / ~20% output split for skill context loading
-const INPUT_RATIO = 0.8
-const OUTPUT_RATIO = 0.2
 
 const AVG_SKILL_TOKENS = 20000
 
 function estimateCost(tokens: number): SkillCostEstimate {
   const tokenMillions = tokens / 1_000_000
-  const sonnetCost = tokenMillions * (SONNET_INPUT_PER_M * INPUT_RATIO + SONNET_OUTPUT_PER_M * OUTPUT_RATIO)
-  const opusCost = tokenMillions * (OPUS_INPUT_PER_M * INPUT_RATIO + OPUS_OUTPUT_PER_M * OUTPUT_RATIO)
+
+  const sonnetCost = tokenMillions * SONNET_INPUT_PER_M
+  const opusCost = tokenMillions * OPUS_INPUT_PER_M
 
   return {
-    sonnet: formatUsd(sonnetCost),
-    opus: formatUsd(opusCost),
+    sonnet_context_load: formatUsd(sonnetCost),
+    opus_context_load: formatUsd(opusCost),
+    token_count: tokens,
+    pricing_note: `Based on input pricing: $${SONNET_INPUT_PER_M}/M (Sonnet), $${OPUS_INPUT_PER_M}/M (Opus). Actual cost depends on how the skill is loaded, cache behavior, and session length.`,
   }
 }
 
@@ -307,7 +304,8 @@ export function renderSkillReport(report: SkillAnalysisReport): string {
   lines.push('')
   lines.push(`  ${sizeBar(report.estimated_tokens)}`)
   lines.push('')
-  lines.push(`  Cost per use:  ${report.cost_per_use.sonnet} (Sonnet)  |  ${report.cost_per_use.opus} (Opus)`)
+  lines.push(`  Context load:  ${report.cost_per_use.sonnet_context_load} (Sonnet)  |  ${report.cost_per_use.opus_context_load} (Opus)`)
+  lines.push(`  ${dim}${report.cost_per_use.pricing_note}${reset}`)
   lines.push('')
 
   if (report.findings.length > 0) {

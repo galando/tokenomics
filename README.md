@@ -291,7 +291,9 @@ tokenomics --analyze-skill ./my-skill --json
   [░░░░░░░░░░░░░█░░░░░░░░░░░░░░░░]
            ▲ avg
 
-  Cost per use:  ~$0.18 (Sonnet)  |  ~$0.91 (Opus)
+  Context load:  ~$0.10 (Sonnet)  |  ~$0.50 (Opus)
+  Based on input pricing: $3/M (Sonnet), $15/M (Opus). Actual cost
+  depends on how the skill is loaded, cache behavior, and session length.
 
   Findings (3):
   ● prompt-size [medium]
@@ -319,8 +321,10 @@ With `--json`, the output includes all fields for programmatic consumption:
   "estimated_tokens": 8500,
   "comparison": "8,500 tokens — below average (avg is ~20,000 tokens)",
   "cost_per_use": {
-    "sonnet": "~$0.05",
-    "opus": "~$0.23"
+    "sonnet_context_load": "~$0.03",
+    "opus_context_load": "~$0.13",
+    "token_count": 8500,
+    "pricing_note": "Based on input pricing: $3/M (Sonnet), $15/M (Opus). Actual cost depends on how the skill is loaded, cache behavior, and session length."
   },
   "what_this_means": "Bigger skills cost more per invocation and leave less room for conversation. Smaller skills respond faster and cost less.",
   "findings": [
@@ -351,7 +355,7 @@ With `--json`, the output includes all fields for programmatic consumption:
 | `grade` | A (lean) / B (good) / C (bloated) / D (wasteful) |
 | `estimated_tokens` | Total token count across all skill files |
 | `comparison` | How this skill compares to average (~20k tokens) |
-| `cost_per_use` | Real money per invocation on Sonnet and Opus |
+| `cost_per_use` | Context loading cost on Sonnet and Opus (input tokens only) |
 | `what_this_means` | Why size matters: cost + speed + context window competition |
 | `sections[]` | Per-heading token breakdown with redundancy and shortening tips |
 
@@ -391,16 +395,16 @@ The `section-analysis` rule parses markdown headings and provides:
 
 ### Cost estimation
 
-Based on Claude API pricing with an 80/20 input/output token split:
+Based on Claude API **input token** pricing only. Skills are loaded into context — they don't generate output. Actual cost depends on how the skill platform loads content, caching behavior, and how many turns a session lasts.
 
 | Tokens | Sonnet cost | Opus cost |
 |--------|-------------|-----------|
-| 5,000 | ~$0.03 | ~$0.15 |
-| 20,000 (avg) | ~$0.12 | ~$0.59 |
-| 50,000 | ~$0.29 | ~$1.47 |
-| 100,000 | ~$0.59 | ~$2.94 |
+| 5,000 | ~$0.02 | ~$0.08 |
+| 20,000 (avg) | ~$0.06 | ~$0.30 |
+| 50,000 | ~$0.15 | ~$0.75 |
+| 100,000 | ~$0.30 | ~$1.50 |
 
-Every skill is loaded into context on every turn. A 50k-token skill costs ~$1.47 per turn on Opus — trimming it to 20k saves ~$0.88 per turn.
+These are **context loading costs per load**. In a session where the skill is re-sent as input on every turn, multiply by the number of turns. With prompt caching, subsequent loads may be significantly cheaper.
 
 ### Integration with skill registries
 
@@ -415,7 +419,7 @@ result = subprocess.run(
 )
 if result.returncode == 0:
     analysis = json.loads(result.stdout)
-    print(f"Grade: {analysis['grade']} | Cost: {analysis['cost_per_use']['sonnet']}/use")
+    print(f"Grade: {analysis['grade']} | Context load: {analysis['cost_per_use']['sonnet_context_load']} (Sonnet)")
     for finding in analysis["findings"]:
         print(f"[{finding['severity']}] {finding['rule']}: {finding['description']}")
 ```
