@@ -2,27 +2,33 @@
  * Section Analysis Rule
  *
  * Parses markdown files into sections (by headings) and:
- * 1. Reports per-section token counts
- * 2. Detects sections with redundant/overlapping content
+ * 1. Reports per-section token counts (always for files >1000 tokens)
+ * 2. Detects sections with redundant/overlapping content (within file AND cross-file)
  * 3. Suggests which sections can be shortened and why
  *
- * Only analyzes SKILL.md and .atom.md files.
+ * Analyzes SKILL.md, .atom.md, and reference files under references/.
  */
 
 import type { SkillAnalysisContext, SkillFinding, SkillSection } from '../types.js'
 
 const CHARS_PER_TOKEN = 4
-
-const SECTION_TOKEN_THRESHOLD = 500 // Flag sections >500 tokens
-const LARGE_SECTION_THRESHOLD = 1000 // Flag sections >1000 tokens
+const SECTION_TOKEN_THRESHOLD = 500
+const LARGE_SECTION_THRESHOLD = 1000
+const FILE_TOKEN_BREAKDOWN_THRESHOLD = 1000 // Always report breakdown for files above this
 
 const PROMPT_FILE_PATTERNS = [
   /^SKILL\.md$/i,
   /\.atom\.md$/i,
 ]
 
+const ALL_MD_PATTERN = /\.md$/i
+
 function isPromptFile(filename: string): boolean {
   return PROMPT_FILE_PATTERNS.some(p => p.test(filename))
+}
+
+function isMarkdownFile(filename: string): boolean {
+  return ALL_MD_PATTERN.test(filename)
 }
 
 interface ParsedSection {
@@ -31,6 +37,12 @@ interface ParsedSection {
   lineStart: number
   content: string
   tokens: number
+}
+
+interface FileSections {
+  filename: string
+  sections: ParsedSection[]
+  totalTokens: number
 }
 
 function parseSections(content: string): ParsedSection[] {
@@ -42,6 +54,7 @@ function parseSections(content: string): ParsedSection[] {
   let currentLines: string[] = []
 
   for (let i = 0; i < lines.length; i++) {
+    // Match markdown headings: # through ######, also handle frontmatter (---)
     const headingMatch = lines[i]!.match(/^(#{1,6})\s+(.+)$/)
     if (headingMatch) {
       // Flush previous section
@@ -82,47 +95,72 @@ function parseSections(content: string): ParsedSection[] {
 function normalizeContent(content: string): string {
   return content
     .toLowerCase()
-    .replace(/```[\s\S]*?```/g, '') // Remove code blocks
-    .replace(/`[^`]+`/g, '')        // Remove inline code
-    .replace(/[^\w\s]/g, '')        // Remove punctuation
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/`[^`]+`/g, '')
+    .replace(/[^\w\s]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
 }
 
-function detectRedundantSections(sections: ParsedSection[]): Map<number, string[]> {
-  const redundancyMap = new Map<number, string[]>()
+function jaccardSimilarity(textA: string, textB: string): number {
+  const normA = normalizeContent(textA)
+  const normB = normalizeContent(textB)
+  if (normA.length < 20 || normB.length < 20) return 0
 
-  for (let i = 0; i < sections.length; i++) {
-    const normA = normalizeContent(sections[i]!.content)
-    if (normA.length < 40) continue // Skip tiny sections
+  const wordsA = new Set(normA.split(' ').filter(w => w.length > 3))
+  const wordsB = new Set(normB.split(' ').filter(w => w.length > 3))
+  if (wordsA.size === 0 || wordsB.size === 0) return 0
 
-    for (let j = i + 1; j < sections.length; j++) {
-      const normB = normalizeContent(sections[j]!.content)
-      if (normB.length < 40) continue
+  const intersection = [...wordsA].filter(w => wordsB.has(w))
+  const union = new Set([...wordsA, ...wordsB])
+  return intersection.length / union.size
+}
 
-      // Jaccard similarity on word sets
-      const wordsA = new Set(normA.split(' ').filter(w => w.length > 3))
-      const wordsB = new Set(normB.split(' ').filter(w => w.length > 3))
+interface RedundancyLink {
+  sourceFile: string
+  sourceSection: string
+  targetFile: string
+  targetSection: string
+  similarity: number
+}
 
-      if (wordsA.size === 0 || wordsB.size === 0) continue
+interface RedundancyPeer {
+  file: string
+  section: string
+}
 
-      const intersection = [...wordsA].filter(w => wordsB.has(w))
-      const union = new Set([...wordsA, ...wordsB])
-      const similarity = intersection.length / union.size
+function detectRedundancy(allFileSections: FileSections[]): RedundancyLink[] {
+  const links: RedundancyLink[] = []
+  const allSections: Array<{ file: string; section: ParsedSection }> = []
 
-      if (similarity > 0.4) {
-        const existing = redundancyMap.get(i) ?? []
-        existing.push(sections[j]!.heading)
-        redundancyMap.set(i, existing)
+  for (const fs of allFileSections) {
+    for (const s of fs.sections) {
+      allSections.push({ file: fs.filename, section: s })
+    }
+  }
 
-        const existingJ = redundancyMap.get(j) ?? []
-        existingJ.push(sections[i]!.heading)
-        redundancyMap.set(j, existingJ)
+  for (let i = 0; i < allSections.length; i++) {
+    const a = allSections[i]!
+    if (a.section.tokens < 20) continue // Skip tiny sections
+
+    for (let j = i + 1; j < allSections.length; j++) {
+      const b = allSections[j]!
+      if (b.section.tokens < 20) continue
+
+      const similarity = jaccardSimilarity(a.section.content, b.section.content)
+      if (similarity > 0.25) {
+        links.push({
+          sourceFile: a.file,
+          sourceSection: a.section.heading,
+          targetFile: b.file,
+          targetSection: b.section.heading,
+          similarity,
+        })
       }
     }
   }
 
-  return redundancyMap
+  return links.sort((a, b) => b.similarity - a.similarity)
 }
 
 function getShorteningTip(section: ParsedSection): string | undefined {
@@ -145,7 +183,7 @@ function getShorteningTip(section: ParsedSection): string | undefined {
   // Check for code blocks
   const codeBlockCount = (section.content.match(/```/g) ?? []).length / 2
   if (codeBlockCount >= 2) {
-    tips.push(`Has ${codeBlockCount} code blocks — consider replacing examples with file references`)
+    tips.push(`Has ${Math.floor(codeBlockCount)} code blocks — consider replacing examples with file references`)
   }
 
   // Check for list items that could be collapsed
@@ -161,49 +199,91 @@ function getShorteningTip(section: ParsedSection): string | undefined {
     tips.push(`${longParagraphs.length} long paragraph(s) over 375 tokens — consider breaking into bullet points`)
   }
 
+  // Check for table-heavy content
+  const tableRows = lines.filter(l => /^\|/.test(l.trim()))
+  if (tableRows.length > 15) {
+    tips.push(`${tableRows.length} table rows — consider moving detailed tables to reference files and keeping only a summary`)
+  }
+
   return tips.length > 0 ? tips.join('. ') + '.' : undefined
 }
 
 export function analyze(context: SkillAnalysisContext): SkillFinding[] {
   const findings: SkillFinding[] = []
 
+  // Parse all markdown files into sections
+  const promptFileSections: FileSections[] = []
+  const referenceFileSections: FileSections[] = []
+
   for (const [filename, content] of context.files) {
-    if (!isPromptFile(filename)) continue
+    if (!isMarkdownFile(filename)) continue
     if (content.trim().length === 0) continue
 
     const sections = parseSections(content)
     if (sections.length === 0) continue
 
-    const redundancyMap = detectRedundantSections(sections)
+    const totalTokens = Math.ceil(content.length / CHARS_PER_TOKEN)
+    const entry: FileSections = { filename, sections, totalTokens }
 
-    // Build per-section data with tips
-    const sectionData: SkillSection[] = sections.map((s, idx) => ({
-      heading: s.heading,
-      level: s.level,
-      lineStart: s.lineStart,
-      tokens: s.tokens,
-      redundantWith: redundancyMap.get(idx),
-      shorteningTip: getShorteningTip(s),
-    }))
+    if (isPromptFile(filename)) {
+      promptFileSections.push(entry)
+    } else if (filename.includes('references/')) {
+      referenceFileSections.push(entry)
+    }
+  }
 
-    // Find oversized sections
-    const largeSections = sections.filter(s => s.tokens > SECTION_TOKEN_THRESHOLD)
+  // Cross-file + within-file redundancy detection across all files
+  const allFileSections = [...promptFileSections, ...referenceFileSections]
+  const redundancyLinks = detectRedundancy(allFileSections)
 
-    // Find sections with redundancy
-    const redundantSections = [...redundancyMap.entries()]
-      .filter(([, peers]) => peers.length > 0)
-      .map(([idx]) => sections[idx]!)
+  // Build redundancy lookup: filename → section heading → redundant peers
+  const redundancyLookup = new Map<string, Map<string, RedundancyPeer[]>>()
+  for (const link of redundancyLinks) {
+    // Forward direction
+    let fileMap = redundancyLookup.get(link.sourceFile)
+    if (!fileMap) { fileMap = new Map(); redundancyLookup.set(link.sourceFile, fileMap) }
+    let peers = fileMap.get(link.sourceSection)
+    if (!peers) { peers = []; fileMap.set(link.sourceSection, peers) }
+    peers.push({ file: link.targetFile, section: link.targetSection })
 
-    // Find sections with shortening opportunities
-    const shortenableSections = sections.filter((_, idx) => {
-      const tip = sectionData[idx]!.shorteningTip
-      return tip !== undefined
+    // Reverse direction
+    fileMap = redundancyLookup.get(link.targetFile)
+    if (!fileMap) { fileMap = new Map(); redundancyLookup.set(link.targetFile, fileMap) }
+    peers = fileMap.get(link.targetSection)
+    if (!peers) { peers = []; fileMap.set(link.targetSection, peers) }
+    peers.push({ file: link.sourceFile, section: link.sourceSection })
+  }
+
+  // Generate findings per prompt file
+  for (const { filename, sections, totalTokens } of promptFileSections) {
+    const fileRedundancy = redundancyLookup.get(filename) ?? new Map()
+
+    // Build per-section data
+    const sectionData: SkillSection[] = sections.map((s) => {
+      const peers: RedundancyPeer[] | undefined = fileRedundancy.get(s.heading)
+      // Deduplicate peer labels
+      const peerLabels: string[] | undefined = peers
+        ? [...new Set(peers.map((p: RedundancyPeer) => p.file === filename ? `"${p.section}"` : `${p.file} → "${p.section}"`))]
+        : undefined
+
+      return {
+        heading: s.heading,
+        level: s.level,
+        lineStart: s.lineStart,
+        tokens: s.tokens,
+        redundantWith: peerLabels && peerLabels.length > 0 ? peerLabels : undefined,
+        shorteningTip: getShorteningTip(s),
+      }
     })
 
-    // Generate finding if anything actionable
-    const hasIssues = largeSections.length > 0 || redundantSections.length > 0 || shortenableSections.length > 0
+    // Determine what's actionable
+    const largeSections = sections.filter(s => s.tokens > SECTION_TOKEN_THRESHOLD)
+    const redundantSections = sections.filter(s => (fileRedundancy.get(s.heading) ?? []).length > 0)
+    const shortenableSections = sections.filter((_, idx) => sectionData[idx]!.shorteningTip !== undefined)
+    const hasLargeFile = totalTokens > FILE_TOKEN_BREAKDOWN_THRESHOLD
 
-    if (!hasIssues) continue
+    // Generate finding if anything actionable OR file is large enough to warrant breakdown
+    if (!hasLargeFile && largeSections.length === 0 && redundantSections.length === 0 && shortenableSections.length === 0) continue
 
     // Build description
     const parts: string[] = []
@@ -212,8 +292,21 @@ export function analyze(context: SkillAnalysisContext): SkillFinding[] {
       parts.push(`Largest section "${top.heading}" is ~${top.tokens.toLocaleString()} tokens`)
     }
     if (redundantSections.length > 0) {
-      const names = redundantSections.map(s => `"${s.heading}"`)
-      parts.push(`${redundantSections.length} section(s) overlap: ${names.join(', ')}`)
+      const crossFile = redundantSections.filter(s => {
+        const peers: RedundancyPeer[] = fileRedundancy.get(s.heading) ?? []
+        return peers.some((p: RedundancyPeer) => p.file !== filename)
+      })
+      if (crossFile.length > 0) {
+        parts.push(`${crossFile.length} section(s) duplicate content from reference files`)
+      }
+      const withinFile = redundantSections.filter(s => {
+        const peers: RedundancyPeer[] = fileRedundancy.get(s.heading) ?? []
+        return peers.some((p: RedundancyPeer) => p.file === filename)
+      })
+      if (withinFile.length > 0) {
+        const names = withinFile.map(s => `"${s.heading}"`)
+        parts.push(`${withinFile.length} section(s) overlap each other: ${names.join(', ')}`)
+      }
     }
     if (shortenableSections.length > 0) {
       parts.push(`${shortenableSections.length} section(s) have shortening opportunities`)
@@ -235,22 +328,38 @@ export function analyze(context: SkillAnalysisContext): SkillFinding[] {
       remediationParts.push(`"${s.heading}" (${s.tokens} tokens): split into smaller focused subsections or move details to separate files`)
     }
     for (const s of redundantSections.slice(0, 3)) {
-      const peers = redundancyMap.get(sections.indexOf(s)) ?? []
-      remediationParts.push(`"${s.heading}" overlaps with ${peers.join(', ')}: consolidate shared content into one section`)
+      const peers: RedundancyPeer[] = fileRedundancy.get(s.heading) ?? []
+      const crossFilePeers = peers.filter((p: RedundancyPeer) => p.file !== filename)
+      const sameFilePeers = peers.filter((p: RedundancyPeer) => p.file === filename)
+
+      if (crossFilePeers.length > 0) {
+        const targets = [...new Set(crossFilePeers.map((p: RedundancyPeer) => `${p.file} "${p.section}"`))].join(', ')
+        remediationParts.push(`"${s.heading}" duplicates content from ${targets}: keep it in one place, reference from the other`)
+      }
+      if (sameFilePeers.length > 0) {
+        const targets = [...new Set(sameFilePeers.map((p: RedundancyPeer) => `"${p.section}"`))].join(', ')
+        remediationParts.push(`"${s.heading}" overlaps with ${targets}: consolidate shared content into one section`)
+      }
     }
-    for (let i = 0; i < shortenableSections.length; i++) {
-      const idx = sections.indexOf(shortenableSections[i]!)
+    for (const s of shortenableSections.slice(0, 3)) {
+      const idx = sections.indexOf(s)
       const tip = sectionData[idx]!.shorteningTip
-      remediationParts.push(`"${shortenableSections[i]!.heading}": ${tip}`)
+      remediationParts.push(`"${s.heading}": ${tip}`)
     }
+
+    // Section token breakdown for context
+    const topSections = [...sections].sort((a, b) => b.tokens - a.tokens).slice(0, 5)
+    const breakdown = topSections.map(s => `"${s.heading}": ${s.tokens}`).join(', ')
 
     findings.push({
       rule: 'section-analysis',
       severity,
       confidence: 0.8,
-      description: `${filename}: ${parts.join('. ')}. Total file: ~${Math.ceil(content.length / CHARS_PER_TOKEN).toLocaleString()} tokens across ${sections.length} sections.`,
+      description: parts.length > 0
+        ? `${filename}: ${parts.join('. ')}. Total: ~${totalTokens.toLocaleString()} tokens across ${sections.length} sections (top: ${breakdown})`
+        : `${filename}: ~${totalTokens.toLocaleString()} tokens across ${sections.length} sections. Token breakdown: ${breakdown}`,
       location: filename,
-      remediation: remediationParts.join('\n'),
+      remediation: remediationParts.length > 0 ? remediationParts.join('\n') : 'No shortening opportunities detected — structure looks efficient.',
       sections: sectionData,
     })
   }

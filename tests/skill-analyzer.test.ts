@@ -312,7 +312,7 @@ describe('section-analysis rule', () => {
     // Check redundantWith is populated
     const codeReview = finding.sections!.find(s => s.heading === 'Code Review')
     expect(codeReview!.redundantWith).toBeDefined()
-    expect(codeReview!.redundantWith).toContain('Security Review')
+    expect(codeReview!.redundantWith!.some(r => r.includes('Security Review'))).toBe(true)
   })
 
   it('suggests shortening tips for sections with repeated lines', () => {
