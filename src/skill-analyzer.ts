@@ -272,6 +272,22 @@ function severityIcon(sev: string): string {
   }
 }
 
+function wrapText(text: string, width: number): string[] {
+  const words = text.split(' ')
+  const lines: string[] = []
+  let current = ''
+  for (const word of words) {
+    if (current.length + word.length + 1 > width && current.length > 0) {
+      lines.push(current)
+      current = word
+    } else {
+      current = current.length === 0 ? word : `${current} ${word}`
+    }
+  }
+  if (current.length > 0) lines.push(current)
+  return lines
+}
+
 export function renderSkillReport(report: SkillAnalysisReport): string {
   const bold = '\x1b[1m'
   const dim = '\x1b[2m'
@@ -299,10 +315,16 @@ export function renderSkillReport(report: SkillAnalysisReport): string {
     for (const f of report.findings) {
       const icon = severityIcon(f.severity)
       lines.push(`  ${icon} ${bold}${f.rule}${reset} [${f.severity}]`)
-      lines.push(`    ${dim}${f.description.slice(0, 120)}${f.description.length > 120 ? '...' : ''}${reset}`)
+      // Wrap description to 76 chars (terminal width minus indentation)
+      for (const ln of wrapText(f.description, 76)) {
+        lines.push(`    ${dim}${ln}${reset}`)
+      }
       if (f.remediation) {
-        const firstRemediation = f.remediation.split('\n')[0]!
-        lines.push(`    ${dim}Fix: ${firstRemediation.slice(0, 100)}${firstRemediation.length > 100 ? '...' : ''}${reset}`)
+        for (const remediationLine of f.remediation.split('\n')) {
+          for (const ln of wrapText(`Fix: ${remediationLine}`, 76)) {
+            lines.push(`    ${dim}${ln}${reset}`)
+          }
+        }
       }
       lines.push('')
     }
