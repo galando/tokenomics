@@ -2,7 +2,7 @@
 
 A CLI tool that analyzes your Claude Code session history to identify token waste patterns and provide actionable fixes. Runs locally, no LLM needed.
 
-**v2.3** adds `--analyze-skill` mode for static token analysis of AI agent skill packages — designed for integration with skill registries like [Tank](https://github.com/tankpkg/tank).
+**v2.3** adds `--analyze-skill` — analyze any AI agent skill package for token efficiency with cost estimates, letter grades, section-level breakdowns, and actionable shortening tips. Designed for integration with skill registries like [Tank](https://github.com/tankpkg/tank).
 
 **The mental model: tokenomics is a coach, not a remote control.** It writes suggestions into your CLAUDE.md where Claude can see them. Claude is smart enough to follow most of them — suggesting `/compact` when context grows, recommending Sonnet for simple tasks, warning when you're overspending. But it cannot switch models, run commands, or force behavior. The user is always in control.
 
@@ -240,7 +240,7 @@ Budget config lives at `~/.claude/tokenomics.json`:
 | `--inject` | Re-analyze sessions + update CLAUDE.md findings | false |
 | `--quiet` | Suppress terminal output (used by hooks) | false |
 | `--verbose` | Show discovery progress and debug info | false |
-| `--analyze-skill <dir>` | Analyze skill package for token efficiency (outputs JSON) | - |
+| `--analyze-skill <dir>` | Analyze skill package for token efficiency | - |
 | `--help` | Show help message | - |
 | `--version` | Show version | - |
 
@@ -267,36 +267,72 @@ Budget config lives at `~/.claude/tokenomics.json`:
 
 ## Skill Analysis (`--analyze-skill`)
 
-Analyze an AI agent skill package directory for token efficiency. Useful for skill authors before publishing, and for skill registries (like [Tank](https://github.com/tankpkg/tank)) to include token findings alongside security scan results.
+Analyze an AI agent skill package directory for token efficiency. Produces a grade (A/B/C/D), cost per use in real money, per-section token breakdowns, and actionable suggestions for what to cut and why.
 
 ```bash
-# Analyze a skill package
+# Terminal report (default)
 tokenomics --analyze-skill ./my-skill
 
-# With pretty-printed JSON
-tokenomics --analyze-skill ./my-skill --verbose
+# JSON output (for scripts, CI, Tank integration)
+tokenomics --analyze-skill ./my-skill --json
 ```
 
-### Output format
+### Terminal output
+
+```
+  SKILL TOKEN ANALYSIS
+  ──────────────────────────────────────────────────
+
+  "Well-structured skill with no significant waste."
+
+  Grade:  A  (86/100)
+  Size:   33,598 tokens — above average (avg is ~20,000 tokens)
+
+  [░░░░░░░░░░░░░█░░░░░░░░░░░░░░░░]
+           ▲ avg
+
+  Cost per use:  ~$0.18 (Sonnet)  |  ~$0.91 (Opus)
+
+  Findings (3):
+  ● prompt-size [medium]
+    Prompt file "SKILL.md" is ~2,388 tokens (9,549 chars).
+    Consider trimming for faster invocations.
+    Fix: Consider trimming "SKILL.md" to under 2000 tokens.
+    Extract verbose examples into separate reference files.
+
+  ● section-analysis [low]
+    SKILL.md: 2 section(s) overlap each other.
+    Fix: "web app setup" overlaps with "library setup":
+    consolidate shared content into one section.
+    Tip: References 18 specific file paths — consider
+    replacing with a glob pattern or naming convention rule.
+```
+
+### JSON output
+
+With `--json`, the output includes all fields for programmatic consumption:
 
 ```json
 {
+  "one_liner": "Slightly above average size. Works fine, could be leaner.",
+  "grade": "B",
+  "estimated_tokens": 8500,
+  "comparison": "8,500 tokens — below average (avg is ~20,000 tokens)",
+  "cost_per_use": {
+    "sonnet": "~$0.05",
+    "opus": "~$0.23"
+  },
+  "what_this_means": "Bigger skills cost more per invocation and leave less room for conversation. Smaller skills respond faster and cost less.",
   "findings": [
     {
-      "rule": "prompt-size",
-      "severity": "medium",
-      "confidence": 0.9,
-      "description": "Prompt file \"SKILL.md\" is ~4,200 tokens (16,800 chars)...",
-      "location": "SKILL.md",
-      "remediation": "Trim to under 2000 tokens. Move detailed examples to separate files..."
-    },
-    {
-      "rule": "tool-overhead",
-      "severity": "medium",
-      "confidence": 0.85,
-      "description": "12 tool definitions found. Each adds ~200-500 tokens of context...",
-      "location": "manifest/config",
-      "remediation": "Consider reducing to 8 or fewer tools..."
+      "rule": "section-analysis",
+      "severity": "low",
+      "description": "SKILL.md: 2 section(s) overlap each other...",
+      "remediation": "\"Setup\" overlaps with \"Config\": consolidate...",
+      "sections": [
+        { "heading": "Setup", "tokens": 420, "redundantWith": ["Config"] },
+        { "heading": "Config", "tokens": 380, "redundantWith": ["Setup"] }
+      ]
     }
   ],
   "summary": {
@@ -307,6 +343,18 @@ tokenomics --analyze-skill ./my-skill --verbose
 }
 ```
 
+### Report fields
+
+| Field | What it means |
+|-------|---------------|
+| `one_liner` | Plain English summary of the skill's efficiency |
+| `grade` | A (lean) / B (good) / C (bloated) / D (wasteful) |
+| `estimated_tokens` | Total token count across all skill files |
+| `comparison` | How this skill compares to average (~20k tokens) |
+| `cost_per_use` | Real money per invocation on Sonnet and Opus |
+| `what_this_means` | Why size matters: cost + speed + context window competition |
+| `sections[]` | Per-heading token breakdown with redundancy and shortening tips |
+
 ### Analysis rules
 
 | Rule | What it checks | Thresholds |
@@ -316,14 +364,47 @@ tokenomics --analyze-skill ./my-skill --verbose
 | `tool-overhead` | Tool definitions in manifest (tank.json, skills.json) | >8 tools = medium, >15 = high |
 | `large-files` | Files with >500 lines that are expensive to read | >500 lines = low, >1000 = medium |
 | `redundant-instructions` | Duplicated instruction lines across skill files | >30% duplication = low/medium |
+| `section-analysis` | Per-section token breakdown, cross-file redundancy, content tips | See below |
 
-### Efficiency score
+### Section analysis details
 
-The `efficiency_score` (0-100) reflects overall token efficiency. It starts at 100 and deducts points per finding: -15 for high, -8 for medium, -3 for low, -1 for info. A bonus +10 is given for skill packages under 1000 total tokens.
+The `section-analysis` rule parses markdown headings and provides:
+
+**Token breakdown**: Every section gets a token count, so you can see exactly where the weight is.
+
+**Cross-file redundancy**: Detects when a section in SKILL.md says the same thing as a section in `references/*.md`. Example: `"The Bridge"` in SKILL.md duplicates `"The Bridge Model"` in `references/orchestration-workflow.md`.
+
+**Content-level shortening tips** (not just structural):
+
+| Tip | What it detects |
+|-----|----------------|
+| Concept repetition | Same key phrase restated 3+ times — state once, reference elsewhere |
+| Restatements | "remember that", "note that", "in other words" — AI understood the first time |
+| Bad/good example pairs | Shows both wrong and right patterns — use a negative constraint rule instead |
+| File path enumeration | 6+ specific paths — replace with glob patterns or naming conventions |
+| Verbose justification | "this is important because" — AI follows rules without persuasion |
+| Large directory trees | ASCII trees >10 lines — keep top-level, link to reference |
+| Repeated lines | Identical lines within a section — dedup or collapse |
+| Code block bloat | 2+ code blocks — replace with file references |
+| Long lists | 8+ list items — group into categories |
+| Table bloat | 15+ table rows — move details to reference files |
+
+### Cost estimation
+
+Based on Claude API pricing with an 80/20 input/output token split:
+
+| Tokens | Sonnet cost | Opus cost |
+|--------|-------------|-----------|
+| 5,000 | ~$0.03 | ~$0.15 |
+| 20,000 (avg) | ~$0.12 | ~$0.59 |
+| 50,000 | ~$0.29 | ~$1.47 |
+| 100,000 | ~$0.59 | ~$2.94 |
+
+Every skill is loaded into context on every turn. A 50k-token skill costs ~$1.47 per turn on Opus — trimming it to 20k saves ~$0.88 per turn.
 
 ### Integration with skill registries
 
-The `--analyze-skill` mode is designed to be called as a subprocess from security scanning pipelines. Example from Tank's Python scanner:
+Designed to be called as a subprocess from scanning pipelines:
 
 ```python
 import subprocess, json
@@ -334,12 +415,12 @@ result = subprocess.run(
 )
 if result.returncode == 0:
     analysis = json.loads(result.stdout)
+    print(f"Grade: {analysis['grade']} | Cost: {analysis['cost_per_use']['sonnet']}/use")
     for finding in analysis["findings"]:
-        # Convert to your scan Finding model
         print(f"[{finding['severity']}] {finding['rule']}: {finding['description']}")
 ```
 
-Graceful degradation: if tokenomics is not installed, the calling pipeline should skip this stage and continue.
+Graceful degradation: if tokenomics is not installed, skip the stage and continue.
 
 ## Output Examples
 
@@ -347,7 +428,7 @@ Graceful degradation: if tokenomics is not installed, the calling pipeline shoul
 
 ```
   TOKENOMICS — Token Intelligence for Claude Code
-  60 sessions // 30 day range // v2.2.2
+  60 sessions // 30 day range // v2.3.0
 
   Sessions:   60
   Total:     1.2M tokens
