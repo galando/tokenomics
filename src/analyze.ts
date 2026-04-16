@@ -20,6 +20,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { AnalysisOutput, CliOptions, DetectorResult, SessionData } from './types.js';
+import { analyzeSkill, renderSkillReport } from './skill-analyzer.js';
 import { discoverFiles, logDiscoverySummary } from './discovery.js';
 import { extractHumanReadableBlock, renderTerminalBlock } from './recommendation.js';
 import { parseSessionFiles } from './parser.js';
@@ -34,7 +35,7 @@ import { auditPrompt } from './auditor.js';
 import { renderPromptOutput } from './prompt-output.js';
 import { ensureBudgetConfig, readBudgetConfig } from './budget-config.js';
 
-const VERSION = '2.2.2';
+const VERSION = '2.3.0';
 
 // ─── CLI ──────────────────────────────────────────────────────────────────────
 
@@ -60,6 +61,7 @@ function parseCliArgs(): CliOptions {
       budget: { type: 'boolean', default: false },
       'budget-check': { type: 'boolean', default: false },
       'no-alerts': { type: 'boolean', default: false },
+      'analyze-skill': { type: 'string' },
     },
     strict: true,
   });
@@ -88,6 +90,7 @@ function parseCliArgs(): CliOptions {
     budget: values.budget,
     budgetCheck: values['budget-check'],
     noAlerts: values['no-alerts'],
+    analyzeSkill: values['analyze-skill'],
   };
 }
 
@@ -130,6 +133,10 @@ PROMPT ANALYSIS
   --budget             Show token budget dashboard
   --budget-check       Lightweight budget check (for hooks)
   --no-alerts          Suppress budget alerts (no CLAUDE.md injection)
+
+SKILL ANALYSIS
+  --analyze-skill <dir> Analyze skill package for token efficiency
+                       Outputs JSON with findings and efficiency score
 
 OTHER
   --verbose            Show discovery progress and debug info
@@ -514,6 +521,17 @@ async function main(): Promise<void> {
     const result = await checkBudget({ config: budgetConfig, forceRefresh: false });
     console.log(renderBudgetCheckOutput(result));
     process.exit(result.ceilingExceeded ? 1 : 0);
+  }
+
+  // ── Skill analysis mode ──
+  if (options.analyzeSkill) {
+    const result = analyzeSkill(options.analyzeSkill);
+    if (options.json) {
+      console.log(JSON.stringify(result, null, options.verbose ? 2 : 0));
+    } else {
+      console.log(renderSkillReport(result));
+    }
+    return;
   }
 
   // Discover JSONL files (auto-detects all ~/.claude* installations)

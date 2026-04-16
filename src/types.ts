@@ -490,6 +490,8 @@ export interface CliOptions {
   budgetCheck: boolean;
   /** Suppress budget alerts (no CLAUDE.md injection) */
   noAlerts: boolean;
+  /** Analyze a skill package directory for token efficiency */
+  analyzeSkill: string | undefined;
 }
 
 // ============================================================================
@@ -673,4 +675,79 @@ export interface AuditReport {
     warning: number;
     info: number;
   };
+}
+
+// ============================================================================
+// Skill Analysis Types (--analyze-skill)
+// ============================================================================
+
+export type SkillSeverity = 'info' | 'low' | 'medium' | 'high';
+
+export interface SkillFinding {
+  rule: string;
+  severity: SkillSeverity;
+  confidence: number;
+  description: string;
+  location: string;
+  remediation: string;
+  /** Optional per-section token breakdown (section-analysis rule) */
+  sections?: SkillSection[];
+}
+
+export interface SkillSection {
+  /** Section heading text (e.g. "## Instructions") */
+  heading: string;
+  /** Heading level (1-6) */
+  level: number;
+  /** 0-based line offset where this section starts */
+  lineStart: number;
+  /** Estimated token count for this section's content (excluding heading) */
+  tokens: number;
+  /** Whether this section overlaps with another section */
+  redundantWith?: string[];
+  /** Why this section could be shortened */
+  shorteningTip?: string;
+}
+
+export interface SkillAnalysisSummary {
+  total_findings: number;
+  estimated_tokens_per_invocation: number;
+  efficiency_score: number; // 0-100
+}
+
+export interface SkillCostEstimate {
+  /** Cost per invocation on Claude Sonnet (USD) */
+  sonnet: string;
+  /** Cost per invocation on Claude Opus (USD) */
+  opus: string;
+}
+
+export type SkillGrade = 'A' | 'B' | 'C' | 'D';
+
+export interface SkillAnalysisReport {
+  /** Plain English one-liner summarizing the skill */
+  one_liner: string;
+  /** Single letter grade */
+  grade: SkillGrade;
+  /** Estimated token count */
+  estimated_tokens: number;
+  /** Comparison to average skill size */
+  comparison: string;
+  /** Cost per invocation in real money */
+  cost_per_use: SkillCostEstimate;
+  /** What this means for the user, 2 sentences max */
+  what_this_means: string;
+  findings: SkillFinding[];
+  summary: SkillAnalysisSummary;
+}
+
+export interface SkillRule {
+  name: string;
+  analyze(context: SkillAnalysisContext): SkillFinding[];
+}
+
+export interface SkillAnalysisContext {
+  skillDir: string;
+  files: Map<string, string>; // filename → content
+  skillManifest: Record<string, unknown> | null;
 }
