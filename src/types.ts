@@ -715,7 +715,28 @@ export interface SkillAnalysisSummary {
   efficiency_score: number; // 0-100
 }
 
-export interface SkillAnalysisResult {
+export interface SkillCostEstimate {
+  /** Cost per invocation on Claude Sonnet (USD) */
+  sonnet: string;
+  /** Cost per invocation on Claude Opus (USD) */
+  opus: string;
+}
+
+export type SkillGrade = 'A' | 'B' | 'C' | 'D';
+
+export interface SkillAnalysisReport {
+  /** Plain English one-liner summarizing the skill */
+  one_liner: string;
+  /** Single letter grade */
+  grade: SkillGrade;
+  /** Estimated token count */
+  estimated_tokens: number;
+  /** Comparison to average skill size */
+  comparison: string;
+  /** Cost per invocation in real money */
+  cost_per_use: SkillCostEstimate;
+  /** What this means for the user, 2 sentences max */
+  what_this_means: string;
   findings: SkillFinding[];
   summary: SkillAnalysisSummary;
 }

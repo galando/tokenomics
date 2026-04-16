@@ -7,7 +7,7 @@
 
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
 import { join, extname, relative } from 'node:path'
-import type { SkillAnalysisContext, SkillAnalysisResult, SkillAnalysisSummary, SkillFinding, SkillRule } from './types.js'
+import type { SkillAnalysisContext, SkillAnalysisReport, SkillAnalysisSummary, SkillCostEstimate, SkillFinding, SkillGrade, SkillRule } from './types.js'
 
 // Import all rules
 import * as promptSizeRule from './skill-rules/prompt-size.js'
@@ -100,8 +100,49 @@ function estimateTokens(files: Map<string, string>): number {
   return Math.ceil(totalChars / CHARS_PER_TOKEN)
 }
 
+// ── Cost estimation ──────────────────────────────────────────────────────────
+
+// Approximate USD per 1M tokens (as of 2026)
+const SONNET_INPUT_PER_M = 3.00
+const SONNET_OUTPUT_PER_M = 15.00
+const OPUS_INPUT_PER_M = 15.00
+const OPUS_OUTPUT_PER_M = 75.00
+
+// Assume ~80% input / ~20% output split for skill context loading
+const INPUT_RATIO = 0.8
+const OUTPUT_RATIO = 0.2
+
+const AVG_SKILL_TOKENS = 20000
+
+function estimateCost(tokens: number): SkillCostEstimate {
+  const tokenMillions = tokens / 1_000_000
+  const sonnetCost = tokenMillions * (SONNET_INPUT_PER_M * INPUT_RATIO + SONNET_OUTPUT_PER_M * OUTPUT_RATIO)
+  const opusCost = tokenMillions * (OPUS_INPUT_PER_M * INPUT_RATIO + OPUS_OUTPUT_PER_M * OUTPUT_RATIO)
+
+  return {
+    sonnet: formatUsd(sonnetCost),
+    opus: formatUsd(opusCost),
+  }
+}
+
+function formatUsd(amount: number): string {
+  if (amount < 0.001) return '<$0.001'
+  if (amount < 0.01) return `~$${amount.toFixed(3)}`
+  if (amount < 0.1) return `~$${amount.toFixed(2)}`
+  if (amount < 1) return `~$${amount.toFixed(2)}`
+  return `~$${amount.toFixed(2)}`
+}
+
+// ── Grading ──────────────────────────────────────────────────────────────────
+
+function calculateGrade(score: number): SkillGrade {
+  if (score >= 85) return 'A'
+  if (score >= 65) return 'B'
+  if (score >= 40) return 'C'
+  return 'D'
+}
+
 function calculateEfficiencyScore(findings: SkillFinding[], totalTokens: number): number {
-  // Start at 100, deduct points based on findings
   let score = 100
 
   for (const finding of findings) {
@@ -112,13 +153,55 @@ function calculateEfficiencyScore(findings: SkillFinding[], totalTokens: number)
     score -= deduction
   }
 
-  // Bonus for low total token count
   if (totalTokens < 1000) score = Math.min(score + 10, 100)
 
   return Math.max(0, Math.min(100, score))
 }
 
-export function analyzeSkill(dir: string): SkillAnalysisResult {
+// ── Plain-English summaries ──────────────────────────────────────────────────
+
+function generateOneLiner(grade: SkillGrade, tokens: number, findingsCount: number): string {
+  if (grade === 'A' && tokens < 5000) return 'Lean and efficient. No meaningful improvements needed.'
+  if (grade === 'A') return 'Well-structured skill with no significant waste.'
+  if (grade === 'B') {
+    if (findingsCount <= 2) return 'Slightly above average size. Works fine, could be leaner.'
+    return 'Good shape overall, with a few areas that could be tightened up.'
+  }
+  if (grade === 'C') return 'Carries noticeable token overhead. Several sections could be trimmed or consolidated.'
+  return 'Bloated — significant token waste. Multiple sections duplicate content or over-explain.'
+}
+
+function generateComparison(tokens: number): string {
+  const ratio = tokens / AVG_SKILL_TOKENS
+  if (ratio < 0.3) return `${tokens.toLocaleString()} tokens — much smaller than avg (~${AVG_SKILL_TOKENS.toLocaleString()} tokens)`
+  if (ratio < 0.7) return `${tokens.toLocaleString()} tokens — below average (avg is ~${AVG_SKILL_TOKENS.toLocaleString()} tokens)`
+  if (ratio < 1.3) return `${tokens.toLocaleString()} tokens — about average for a skill (~${AVG_SKILL_TOKENS.toLocaleString()} tokens)`
+  if (ratio < 2.0) return `${tokens.toLocaleString()} tokens — above average (avg is ~${AVG_SKILL_TOKENS.toLocaleString()} tokens)`
+  return `${tokens.toLocaleString()} tokens — much larger than avg (~${AVG_SKILL_TOKENS.toLocaleString()} tokens)`
+}
+
+function generateWhatThisMeans(tokens: number): string {
+  const ratio = tokens / AVG_SKILL_TOKENS
+  if (ratio < 0.5) return 'Low overhead — the AI loads this context quickly and cheaply. No action needed.'
+  if (ratio < 1.2) return 'Bigger skills cost more per invocation and leave less room for conversation. Smaller skills respond faster and cost less.'
+  return 'This skill is expensive to load on every turn — every byte competes with your actual conversation for the context window. Trimming it saves real money and improves response speed.'
+}
+
+// ── Size bar ─────────────────────────────────────────────────────────────────
+
+function sizeBar(tokens: number): string {
+  const maxTokens = 80000
+  const barWidth = 30
+  const fill = Math.min(Math.round((tokens / maxTokens) * barWidth), barWidth)
+  const avgPos = Math.min(Math.round((AVG_SKILL_TOKENS / maxTokens) * barWidth), barWidth - 1)
+  const bar = '░'.repeat(fill) + '█' + '░'.repeat(Math.max(barWidth - fill - 1, 0))
+  const marker = ' '.repeat(avgPos) + '▲'
+  return `[${bar}]\n [${marker} avg]`
+}
+
+// ── Main export ──────────────────────────────────────────────────────────────
+
+export function analyzeSkill(dir: string): SkillAnalysisReport {
   // Validate directory
   if (!existsSync(dir)) {
     throw new Error(`Directory not found: ${dir}`)
@@ -149,6 +232,7 @@ export function analyzeSkill(dir: string): SkillAnalysisResult {
   // Calculate summary
   const estimatedTokens = estimateTokens(files)
   const efficiencyScore = calculateEfficiencyScore(allFindings, estimatedTokens)
+  const grade = calculateGrade(efficiencyScore)
 
   const summary: SkillAnalysisSummary = {
     total_findings: allFindings.length,
@@ -157,7 +241,78 @@ export function analyzeSkill(dir: string): SkillAnalysisResult {
   }
 
   return {
+    one_liner: generateOneLiner(grade, estimatedTokens, allFindings.length),
+    grade,
+    estimated_tokens: estimatedTokens,
+    comparison: generateComparison(estimatedTokens),
+    cost_per_use: estimateCost(estimatedTokens),
+    what_this_means: generateWhatThisMeans(estimatedTokens),
     findings: allFindings,
     summary,
   }
+}
+
+// ── Terminal renderer ────────────────────────────────────────────────────────
+
+function gradeColor(grade: SkillGrade): string {
+  switch (grade) {
+    case 'A': return '\x1b[32m'  // green
+    case 'B': return '\x1b[33m'  // yellow
+    case 'C': return '\x1b[33m\x1b[1m' // bold yellow
+    case 'D': return '\x1b[31m\x1b[1m' // bold red
+  }
+}
+
+function severityIcon(sev: string): string {
+  switch (sev) {
+    case 'high': return '\x1b[31m●\x1b[0m'
+    case 'medium': return '\x1b[33m●\x1b[0m'
+    case 'low': return '\x1b[36m●\x1b[0m'
+    default: return '\x1b[2m●\x1b[0m'
+  }
+}
+
+export function renderSkillReport(report: SkillAnalysisReport): string {
+  const bold = '\x1b[1m'
+  const dim = '\x1b[2m'
+  const reset = '\x1b[0m'
+  const cyan = '\x1b[36m'
+  const gc = gradeColor(report.grade)
+
+  const lines: string[] = []
+  lines.push('')
+  lines.push(`${cyan}${bold}  SKILL TOKEN ANALYSIS${reset}`)
+  lines.push(`${dim}  ${'─'.repeat(50)}${reset}`)
+  lines.push('')
+  lines.push(`  ${bold}"${report.one_liner}"${reset}`)
+  lines.push('')
+  lines.push(`  Grade:  ${gc}${bold}${report.grade}${reset}  (${report.summary.efficiency_score}/100)`)
+  lines.push(`  Size:   ${report.comparison}`)
+  lines.push('')
+  lines.push(`  ${sizeBar(report.estimated_tokens)}`)
+  lines.push('')
+  lines.push(`  Cost per use:  ${report.cost_per_use.sonnet} (Sonnet)  |  ${report.cost_per_use.opus} (Opus)`)
+  lines.push('')
+
+  if (report.findings.length > 0) {
+    lines.push(`  ${bold}Findings (${report.findings.length}):${reset}`)
+    for (const f of report.findings) {
+      const icon = severityIcon(f.severity)
+      lines.push(`  ${icon} ${bold}${f.rule}${reset} [${f.severity}]`)
+      lines.push(`    ${dim}${f.description.slice(0, 120)}${f.description.length > 120 ? '...' : ''}${reset}`)
+      if (f.remediation) {
+        const firstRemediation = f.remediation.split('\n')[0]!
+        lines.push(`    ${dim}Fix: ${firstRemediation.slice(0, 100)}${firstRemediation.length > 100 ? '...' : ''}${reset}`)
+      }
+      lines.push('')
+    }
+  } else {
+    lines.push(`  ${dim}No findings. Structure looks clean.${reset}`)
+    lines.push('')
+  }
+
+  lines.push(`  ${dim}${report.what_this_means}${reset}`)
+  lines.push('')
+
+  return lines.join('\n')
 }

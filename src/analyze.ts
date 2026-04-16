@@ -20,7 +20,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { AnalysisOutput, CliOptions, DetectorResult, SessionData } from './types.js';
-import { analyzeSkill } from './skill-analyzer.js';
+import { analyzeSkill, renderSkillReport } from './skill-analyzer.js';
 import { discoverFiles, logDiscoverySummary } from './discovery.js';
 import { extractHumanReadableBlock, renderTerminalBlock } from './recommendation.js';
 import { parseSessionFiles } from './parser.js';
@@ -526,7 +526,11 @@ async function main(): Promise<void> {
   // ── Skill analysis mode ──
   if (options.analyzeSkill) {
     const result = analyzeSkill(options.analyzeSkill);
-    console.log(JSON.stringify(result, null, options.verbose ? 2 : 0));
+    if (options.json) {
+      console.log(JSON.stringify(result, null, options.verbose ? 2 : 0));
+    } else {
+      console.log(renderSkillReport(result));
+    }
     return;
   }
 
