@@ -192,17 +192,75 @@ function getShorteningTip(section: ParsedSection): string | undefined {
     tips.push(`${listItems.length} list items — consider grouping into categories or moving details to separate files`)
   }
 
-  // Check for very long paragraphs
-  const paragraphs = section.content.split(/\n\s*\n/).filter(p => p.trim().length > 0)
-  const longParagraphs = paragraphs.filter(p => p.length > 1500)
-  if (longParagraphs.length > 0) {
-    tips.push(`${longParagraphs.length} long paragraph(s) over 375 tokens — consider breaking into bullet points`)
-  }
-
   // Check for table-heavy content
   const tableRows = lines.filter(l => /^\|/.test(l.trim()))
   if (tableRows.length > 15) {
     tips.push(`${tableRows.length} table rows — consider moving detailed tables to reference files and keeping only a summary`)
+  }
+
+  // ── Content-level suggestions ──────────────────────────────────────────
+
+  const normalizedContent = normalizeContent(section.content)
+
+  // Detect concept repetition: same key phrase appearing many times
+  const PHRASE_MIN_LENGTH = 4
+  const words = normalizedContent.split(' ').filter(w => w.length > 2)
+  const phraseCounts = new Map<string, number>()
+  for (let i = 0; i < words.length - PHRASE_MIN_LENGTH; i++) {
+    const phrase = words.slice(i, i + PHRASE_MIN_LENGTH).join(' ')
+    phraseCounts.set(phrase, (phraseCounts.get(phrase) ?? 0) + 1)
+  }
+  const repeatedPhrases = [...phraseCounts.entries()].filter(([, c]) => c >= 3)
+  if (repeatedPhrases.length > 0) {
+    const topPhrase = repeatedPhrases.sort((a, b) => b[1]! - a[1]!)[0]!
+    tips.push(`Concept "${topPhrase[0]!.slice(0, 50)}..." is restated ${topPhrase[1]!} times — state the rule once, reference it elsewhere`)
+  }
+
+  // Detect restatement patterns: "X is Y" followed later by "X means Y" or "remember: X is Y"
+  const restatementPatterns = [
+    /remember.{0,10}(that|:)\s/gi,
+    /note.{0,5}(that|:)\s/gi,
+    /this (is|means)\s/gi,
+    /in other words/gi,
+    /that (is to say|means)\s/gi,
+    /this is (non-)?negotiable/gi,
+  ]
+  let restatementCount = 0
+  for (const pattern of restatementPatterns) {
+    const matches = section.content.match(pattern)
+    if (matches) restatementCount += matches.length
+  }
+  if (restatementCount >= 2) {
+    tips.push(`${restatementCount} restatement(s) detected ("remember that", "note that", "in other words") — the AI already understood the first time; remove re-explanations`)
+  }
+
+  // Detect anti-pattern examples that double the content
+  // Pattern: shows bad example then immediately shows the fix
+  const badGoodPairs = section.content.match(/\bad\b|\bwrong\b|\bdon't\b|\bavoid\b|\bnever\b/gi) ?? []
+  const goodExamples = section.content.match(/\bgood\b|\bcorrect\b|\bfixed\b|\bfixed\b|\binstead\b|\brather\b/gi) ?? []
+  if (badGoodPairs.length >= 3 && goodExamples.length >= 3) {
+    tips.push(`Shows ${badGoodPairs.length} bad examples alongside good ones — consider showing only the correct pattern and stating the rule as a negative constraint (e.g. "never do X")`)
+  }
+
+  // Detect overly specific enumeration that could be a rule
+  // e.g. listing 8 specific file paths when a glob pattern or rule would suffice
+  const specificPaths = section.content.match(/[\w/-]+\.\w{2,4}/g) ?? []
+  const uniquePaths = new Set(specificPaths.map(p => p.toLowerCase()))
+  if (uniquePaths.size > 6) {
+    tips.push(`References ${uniquePaths.size} specific file paths — consider replacing some with a glob pattern or naming convention rule`)
+  }
+
+  // Detect verbose justification that the AI doesn't need
+  // "This is important because..." / "The reason for this is..." / "Why? Because..."
+  const justificationPatterns = section.content.match(/(this is important|the reason for|why\? because|this matters because|this is critical because)/gi) ?? []
+  if (justificationPatterns.length >= 2) {
+    tips.push(`${justificationPatterns.length} justification(s) ("this is important because", "the reason for") — the AI follows instructions without needing persuasion; state the rule directly`)
+  }
+
+  // Detect duplicate directory trees / ASCII diagrams
+  const treeLineCount = lines.filter(l => /^[├└│─┤┬┴┼┌┐└┘││  ]+[a-z]/.test(l) || /^\s+[a-z_]+\/\s*$/i.test(l)).length
+  if (treeLineCount > 10) {
+    tips.push(`Directory tree is ${treeLineCount} lines — consider keeping only the top-level structure and linking to a reference file for the full tree`)
   }
 
   return tips.length > 0 ? tips.join('. ') + '.' : undefined
